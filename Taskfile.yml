@@ -1,0 +1,29 @@
+version: '3'
+
+tasks:
+  dev:
+    desc: Start frontend dev server via Turborepo
+    cmds:
+      - pnpm dev
+
+  dev:all:
+    desc: Start frontend + backend together (pnpm dev + Go server)
+    cmds:
+      - ./scripts/dev.sh
+
+  backend:dev:
+    desc: Run the local data service (Go Fiber)
+    dir: backend
+    cmds:
+      - go run ./cmd/server
+
+  backend:test:
+    desc: Execute backend unit tests and linters
+    dir: backend
+    cmds:
+      - go test ./...
+
+  demo:reset:
+    desc: Reset data root to bundled ./content-demo samples
+    cmds:
+      - ./scripts/reset-demo.sh

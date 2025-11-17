@@ -1,0 +1,7 @@
+id,date,open,high,low,close,note,diary_refs
+sheet-trade-row-1,2025-11-11,45,49,43,46,计划内交易,"diary-2025-11-16-evening"
+sheet-trade-row-2,2025-11-12,46,50,44,48,超额执行,
+sheet-trade-row-3,2025-11-13,48,52,46,51,沉淀策略,
+sheet-trade-row-4,2025-11-14,51,55,49,53,保持止损,
+sheet-trade-row-5,2025-11-15,53,56,51,55,回测优化,
+sheet-trade-row-6,2025-11-16,55,58,54,57,周末复盘,"diary-2025-11-15-finance"

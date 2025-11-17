@@ -1,0 +1,14 @@
+[
+  {
+    "id": "sheet-health",
+    "key": "health",
+    "name": "健康体征",
+    "description": "追踪睡眠 / 训练 / 气功，映射活力指数 K 线"
+  },
+  {
+    "id": "sheet-trade",
+    "key": "trade",
+    "name": "交易胜率",
+    "description": "记录现金流与胜率，关联复盘日记"
+  }
+]
