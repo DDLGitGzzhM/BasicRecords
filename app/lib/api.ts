@@ -103,13 +103,27 @@ export async function updateRootPath(path: string): Promise<string> {
   return payload.path
 }
 
-export async function uploadAsset(file: File): Promise<string> {
+export async function uploadAsset(file: File, occurredAt?: string): Promise<string> {
   const form = new FormData()
   form.append('file', file)
-  const res = await fetch('/api/uploads', {
+  const qs = occurredAt ? `?occurredAt=${encodeURIComponent(occurredAt)}` : ''
+  const res = await fetch(`/api/uploads${qs}`, {
     method: 'POST',
     body: form
   })
   const payload = await handleResponse<{ path: string }>(res)
   return payload.path
+}
+
+export async function exportDataPackage(): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch('/api/export')
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || '导出失败')
+  }
+  const disposition = res.headers.get('content-disposition') ?? ''
+  const match = disposition.match(/filename="?([^"]+)"?/)
+  const filename = match?.[1] ?? 'krecord-backup.zip'
+  const blob = await res.blob()
+  return { blob, filename }
 }

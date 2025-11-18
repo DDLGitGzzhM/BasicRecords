@@ -31,21 +31,27 @@ const CSV_HEADERS = ['id', 'date', 'open', 'high', 'low', 'close', 'note', 'diar
 
 type PathBundle = {
   root: string
-  diaryDir: string
+  contentDir: string
   tableDir: string
-  assetsDir: string
+  relationsDir: string
   relationsFile: string
   sheetMetaFile: string
 }
 
+type DiaryFileInfo = { filePath: string; isChild: boolean }
+
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif'])
+const VIDEO_EXTS = new Set(['.mp4', '.mov', '.webm', '.m4v', '.avi', '.mkv'])
+const OTHER_ASSET_DIR = 'files'
+
 async function getPaths(): Promise<PathBundle> {
   const root = await readDataRoot()
-  const diaryDir = path.join(root, 'dailyReport')
+  const contentDir = path.join(root, 'content')
   const tableDir = path.join(root, 'table')
-  const assetsDir = path.join(root, 'assets')
-  const relationsFile = path.join(root, 'relations.json')
-  const sheetMetaFile = path.join(tableDir, 'meta.json')
-  return { root, diaryDir, tableDir, assetsDir, relationsFile, sheetMetaFile }
+  const relationsDir = path.join(root, 'relations')
+  const relationsFile = path.join(relationsDir, 'relations.json')
+  const sheetMetaFile = path.join(relationsDir, 'meta.json')
+  return { root, contentDir, tableDir, relationsDir, relationsFile, sheetMetaFile }
 }
 
 async function pathExists(target: string) {
@@ -58,20 +64,21 @@ async function pathExists(target: string) {
 }
 
 async function ensureBaseFiles() {
-  const { diaryDir, tableDir, assetsDir, relationsFile } = await getPaths()
-  await fs.mkdir(diaryDir, { recursive: true })
+  const { contentDir, tableDir, relationsDir, relationsFile } = await getPaths()
+  await fs.mkdir(contentDir, { recursive: true })
   await fs.mkdir(tableDir, { recursive: true })
-  await fs.mkdir(assetsDir, { recursive: true })
+  await fs.mkdir(relationsDir, { recursive: true })
   if (!(await pathExists(relationsFile))) {
     await fs.writeFile(relationsFile, JSON.stringify({ sheetRowsToDiaries: {}, diariesToSheets: {} }, null, 2), 'utf8')
   }
 }
 
-function slugifyName(name: string) {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+function titleToSlug(name: string | undefined) {
+  const base = (name ?? '').trim()
+  const cleaned = base
+    .replace(/[^a-zA-Z0-9\u4e00-\u9fa5]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return cleaned || 'diary'
 }
 
 function normalizeSheetMeta(meta: Partial<SheetMeta>, idx: number): SheetMeta {
@@ -174,82 +181,198 @@ function stringifyCSV(rows: Array<Record<string, string>>, headers: string[]): s
   return `${lines.join('\n')}\n`
 }
 
-async function findDiaryFileById(id: string) {
-  const { diaryDir } = await getPaths()
-  const files = await fs.readdir(diaryDir)
-  for (const file of files.filter((f) => f.endsWith('.md'))) {
-    const filePath = path.join(diaryDir, file)
-    const raw = await fs.readFile(filePath, 'utf8')
-    const parsed = matter(raw)
-    const entryId = (parsed.data.id as string) ?? file.replace('.md', '')
-    if (entryId === id) {
-      const parentId =
-        typeof parsed.data.parentId === 'string' && parsed.data.parentId.trim().length > 0
-          ? parsed.data.parentId
-          : null
-      const cover =
-        typeof parsed.data.cover === 'string' && parsed.data.cover.trim().length > 0 ? parsed.data.cover : undefined
-      const entry: DiaryEntry = {
-        id,
-        title: (parsed.data.title as string) ?? id,
-        mood: (parsed.data.mood as string) ?? 'Neutral',
-        tags: (parsed.data.tags as string[]) ?? [],
-        attachments: ((parsed.data.attachments as string[]) ?? []).filter(Boolean),
-        occurredAt: (parsed.data.occurredAt as string) ?? new Date().toISOString(),
-        parentId,
-        cover,
-        content: parsed.content.trim() || '（空）'
+function formatDateParts(raw?: string) {
+  const date = raw ? new Date(raw) : new Date()
+  if (Number.isNaN(date.getTime())) {
+    return formatDateParts()
+  }
+  const year = String(date.getUTCFullYear())
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  return { date, year, month, day }
+}
+
+function normalizeOccurredAt(raw?: string, fallbackPath?: string): string {
+  const date = raw ? new Date(raw) : null
+  if (date && !Number.isNaN(date.getTime())) {
+    return date.toISOString()
+  }
+  if (fallbackPath) {
+    const match = fallbackPath.match(/(\d{4})[-/]?(\d{2})[-/]?(\d{2})/)
+    if (match) {
+      const [_, y, m, d] = match
+      return new Date(`${y}-${m}-${d}T00:00:00Z`).toISOString()
+    }
+  }
+  return new Date().toISOString()
+}
+
+function deriveIdFromPath(filePath: string, parts: { year: string; month: string; day: string }) {
+  const basename = path.basename(filePath, '.md')
+  return `diary-${parts.year}${parts.month}${parts.day}-${basename}`
+}
+
+async function ensureDayStructure(dayDir: string) {
+  await fs.mkdir(dayDir, { recursive: true })
+  await fs.mkdir(path.join(dayDir, 'children'), { recursive: true })
+  await fs.mkdir(path.join(dayDir, 'imgs'), { recursive: true })
+  await fs.mkdir(path.join(dayDir, 'video'), { recursive: true })
+  await fs.mkdir(path.join(dayDir, OTHER_ASSET_DIR), { recursive: true })
+}
+
+async function collectDiaryFiles(): Promise<DiaryFileInfo[]> {
+  const { contentDir } = await getPaths()
+  const files: DiaryFileInfo[] = []
+  const yearDirs = await fs.readdir(contentDir, { withFileTypes: true }).catch(() => [])
+  for (const year of yearDirs.filter((dir) => dir.isDirectory())) {
+    const yearPath = path.join(contentDir, year.name)
+    const monthDirs = await fs.readdir(yearPath, { withFileTypes: true }).catch(() => [])
+    for (const month of monthDirs.filter((dir) => dir.isDirectory())) {
+      const monthPath = path.join(yearPath, month.name)
+      const dayDirs = await fs.readdir(monthPath, { withFileTypes: true }).catch(() => [])
+      for (const day of dayDirs.filter((dir) => dir.isDirectory())) {
+        const dayPath = path.join(monthPath, day.name)
+        const entries = await fs.readdir(dayPath, { withFileTypes: true }).catch(() => [])
+        for (const entry of entries) {
+          if (entry.isFile() && entry.name.endsWith('.md')) {
+            files.push({ filePath: path.join(dayPath, entry.name), isChild: false })
+          }
+        }
+        const childPath = path.join(dayPath, 'children')
+        const hasChildren = await pathExists(childPath)
+        if (hasChildren) {
+          const childEntries = await fs.readdir(childPath, { withFileTypes: true }).catch(() => [])
+          for (const entry of childEntries) {
+            if (entry.isFile() && entry.name.endsWith('.md')) {
+              files.push({ filePath: path.join(childPath, entry.name), isChild: true })
+            }
+          }
+        }
       }
-      return { filePath, entry }
+    }
+  }
+  return files
+}
+
+function parseDateFromPath(contentDir: string, filePath: string) {
+  const relative = path.relative(contentDir, filePath).split(path.sep)
+  const [year, monthKey, dayKey] = relative
+  const day = dayKey?.slice(-2) ?? '01'
+  const month =
+    monthKey && monthKey.length >= 6
+      ? monthKey.slice(-2)
+      : dayKey && dayKey.length >= 6
+        ? dayKey.slice(4, 6)
+        : '01'
+  return { year: year ?? '1970', month, day }
+}
+
+async function readDiaryFile(file: DiaryFileInfo, contentDir: string) {
+  const raw = await fs.readFile(file.filePath, 'utf8')
+  const parsed = matter(raw)
+  const { year, month, day } = parseDateFromPath(contentDir, file.filePath)
+  const occurredAtRaw = parsed.data.occurredAt as string | undefined
+  const occurredAtValid = occurredAtRaw && !Number.isNaN(new Date(occurredAtRaw).getTime()) ? occurredAtRaw : undefined
+  const occurredAt = occurredAtValid ?? new Date(`${year}-${month}-${day}T00:00:00Z`).toISOString()
+  const id = (parsed.data.id as string) || deriveIdFromPath(file.filePath, { year, month, day })
+  const parentId =
+    typeof parsed.data.parentId === 'string' && parsed.data.parentId.trim().length > 0 ? parsed.data.parentId : null
+  const cover =
+    typeof parsed.data.cover === 'string' && parsed.data.cover.trim().length > 0 ? parsed.data.cover : undefined
+  const entry: DiaryEntry = {
+    id,
+    title: (parsed.data.title as string) ?? path.basename(file.filePath, '.md'),
+    mood: (parsed.data.mood as string) ?? 'Neutral',
+    tags: (parsed.data.tags as string[]) ?? [],
+    attachments: ((parsed.data.attachments as string[]) ?? []).filter(Boolean),
+    occurredAt,
+    parentId,
+    cover,
+    content: parsed.content.trim() || '（空）'
+  }
+  return entry
+}
+
+async function findDiaryFileById(id: string) {
+  await migrateLegacyData()
+  const { contentDir } = await getPaths()
+  const candidates = await collectDiaryFiles()
+  for (const file of candidates) {
+    const raw = await fs.readFile(file.filePath, 'utf8')
+    const parsed = matter(raw)
+    const fileId = (parsed.data.id as string) ?? ''
+    if (fileId === id) {
+      const entry = await readDiaryFile(file, contentDir)
+      return { file, entry }
     }
   }
   return null
 }
 
 export async function readDiaryEntryById(id: string): Promise<DiaryEntry | null> {
+  await migrateLegacyData()
+  await normalizeDiaryPlacement()
   const found = await findDiaryFileById(id)
   return found?.entry ?? null
 }
 
 export async function readDiaryEntries(): Promise<DiaryEntry[]> {
   await ensureSheetMetaFile()
-  const { diaryDir } = await getPaths()
-  const files = await fs.readdir(diaryDir)
+  await migrateLegacyData()
+  await normalizeDiaryPlacement()
+  const { contentDir } = await getPaths()
+  const files = await collectDiaryFiles()
   const entries: DiaryEntry[] = []
-  await Promise.all(
-    files
-      .filter((file) => file.endsWith('.md'))
-      .map(async (file) => {
-        const raw = await fs.readFile(path.join(diaryDir, file), 'utf8')
-        const parsed = matter(raw)
-        const id = (parsed.data.id as string) ?? file.replace('.md', '')
-        const parentId =
-          typeof parsed.data.parentId === 'string' && parsed.data.parentId.trim().length > 0
-            ? parsed.data.parentId
-            : null
-        const cover = typeof parsed.data.cover === 'string' && parsed.data.cover.trim().length > 0 ? parsed.data.cover : undefined
-        entries.push({
-          id,
-          title: (parsed.data.title as string) ?? id,
-          mood: (parsed.data.mood as string) ?? 'Neutral',
-          tags: (parsed.data.tags as string[]) ?? [],
-          occurredAt: (parsed.data.occurredAt as string) ?? new Date().toISOString(),
-          parentId,
-          attachments: ((parsed.data.attachments as string[]) ?? []).filter(Boolean),
-          cover,
-          content: parsed.content.trim() || '（空）'
-        })
-      })
-  )
+  for (const file of files) {
+    entries.push(await readDiaryFile(file, contentDir))
+  }
   return entries.sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
+}
+
+// Cache paths inside module scope to avoid repeated readDataRoot calls inside helpers that run synchronously
+let pathCache: PathBundle | null = null
+async function getCachedPaths() {
+  if (!pathCache) {
+    pathCache = await getPaths()
+  }
+  return pathCache
+}
+
+function buildSlug(title: string | undefined) {
+  const prefix = `0x${Date.now().toString(16).slice(-6)}`
+  const base = titleToSlug(title)
+  return `${prefix}-${base}`
+}
+
+async function ensureDiaryPath(title: string | undefined, occurredAt?: string, isChild?: boolean, currentFilePath?: string) {
+  const { contentDir } = await getCachedPaths()
+  const { year, month, day } = formatDateParts(occurredAt)
+  const monthKey = `${year}${month}`
+  const dayKey = `${year}${month}${day}`
+  const dayDir = path.join(contentDir, year, monthKey, dayKey)
+  await ensureDayStructure(dayDir)
+  const targetDir = isChild ? path.join(dayDir, 'children') : dayDir
+
+  const currentBasename =
+    currentFilePath && currentFilePath.startsWith(targetDir) ? path.basename(currentFilePath, '.md') : null
+  let baseSlug = currentBasename || buildSlug(title)
+  let filePath = path.join(targetDir, `${baseSlug}.md`)
+  while ((await pathExists(filePath)) && path.resolve(filePath) !== path.resolve(currentFilePath ?? '')) {
+    baseSlug = `${buildSlug(title)}-${Math.random().toString(36).slice(2, 4)}`
+    filePath = path.join(targetDir, `${baseSlug}.md`)
+  }
+  const relative = path.relative((await getCachedPaths()).root, filePath).split(path.sep).join('/')
+  return { filePath, relative, dayDir, year, month, day }
 }
 
 export async function appendDiaryEntry(input: DiaryInput): Promise<DiaryEntry> {
   await ensureSheetMetaFile()
-  const { diaryDir } = await getPaths()
+  await migrateLegacyData()
+  await normalizeDiaryPlacement()
+  pathCache = await getPaths()
   const occurredAt = input.occurredAt ?? new Date().toISOString()
+  const { filePath, year, month, day } = await ensureDiaryPath(input.title, occurredAt, Boolean(input.parentId))
   const id = input.id ?? `diary-${Date.now()}`
-  const filename = `${id}.md`
   const frontmatter: Record<string, unknown> = {
     id,
     title: input.title,
@@ -263,14 +386,17 @@ export async function appendDiaryEntry(input: DiaryInput): Promise<DiaryEntry> {
     frontmatter.cover = input.cover
   }
   const payload = matter.stringify(input.content, frontmatter)
-  await fs.writeFile(path.join(diaryDir, filename), payload, 'utf8')
+  await fs.writeFile(filePath, payload, 'utf8')
+  const normalizedOccurredAt = Number.isNaN(new Date(occurredAt).getTime())
+    ? new Date(`${year}-${month}-${day}`).toISOString()
+    : occurredAt
   return {
     id,
     title: input.title,
     mood: input.mood ?? 'Neutral',
     tags: input.tags ?? [],
     attachments: input.attachments ?? [],
-    occurredAt,
+    occurredAt: normalizedOccurredAt,
     cover: input.cover,
     parentId: input.parentId ?? null,
     content: input.content
@@ -279,22 +405,29 @@ export async function appendDiaryEntry(input: DiaryInput): Promise<DiaryEntry> {
 
 export async function updateDiaryEntry(id: string, input: DiaryInput): Promise<DiaryEntry> {
   await ensureSheetMetaFile()
+  await migrateLegacyData()
+  await normalizeDiaryPlacement()
+  pathCache = await getPaths()
   const found = await findDiaryFileById(id)
   if (!found) {
     throw new Error('未找到日记')
   }
-  const occurredAt = input.occurredAt ?? found.entry.occurredAt
+  const current = found.entry
+  const occurredAt = input.occurredAt ?? current.occurredAt
+  const isChild = typeof (input.parentId ?? current.parentId) === 'string'
   const nextEntry: DiaryEntry = {
-    ...found.entry,
-    title: input.title ?? found.entry.title,
-    mood: input.mood ?? found.entry.mood,
-    tags: input.tags ?? found.entry.tags,
-    attachments: input.attachments ?? found.entry.attachments,
+    ...current,
+    title: input.title ?? current.title,
+    mood: input.mood ?? current.mood,
+    tags: input.tags ?? current.tags,
+    attachments: input.attachments ?? current.attachments,
     occurredAt,
-    cover: input.cover ?? found.entry.cover,
-    parentId: typeof input.parentId === 'string' ? input.parentId : input.parentId === null ? null : found.entry.parentId,
-    content: input.content ?? found.entry.content
+    cover: input.cover ?? current.cover,
+    parentId: typeof input.parentId === 'string' ? input.parentId : input.parentId === null ? null : current.parentId,
+    content: input.content ?? current.content
   }
+  const target = await ensureDiaryPath(nextEntry.title, occurredAt, isChild, found.file.filePath)
+
   const frontmatter: Record<string, unknown> = {
     id,
     title: nextEntry.title,
@@ -308,17 +441,22 @@ export async function updateDiaryEntry(id: string, input: DiaryInput): Promise<D
     frontmatter.cover = nextEntry.cover
   }
   const payload = matter.stringify(nextEntry.content, frontmatter)
-  await fs.writeFile(found.filePath, payload, 'utf8')
+  await fs.writeFile(target.filePath, payload, 'utf8')
+  if (path.resolve(found.file.filePath) !== path.resolve(target.filePath)) {
+    await fs.unlink(found.file.filePath).catch(() => {})
+  }
   return nextEntry
 }
 
 export async function deleteDiaryEntry(id: string) {
   await ensureSheetMetaFile()
+  await migrateLegacyData()
+  await normalizeDiaryPlacement()
   const found = await findDiaryFileById(id)
   if (!found) {
     throw new Error('未找到日记')
   }
-  await fs.unlink(found.filePath)
+  await fs.unlink(found.file.filePath).catch(() => {})
 
   const relations = await readRelations()
   const relatedRows = relations.diariesToSheets[id] ?? []
@@ -335,6 +473,7 @@ export async function deleteDiaryEntry(id: string) {
 
 export async function readRelations(): Promise<RelationsMap> {
   await ensureSheetMetaFile()
+  await migrateLegacyData()
   const { relationsFile } = await getPaths()
   const raw = await fs.readFile(relationsFile, 'utf8')
   const parsed = JSON.parse(raw) as RelationsMap
@@ -605,11 +744,393 @@ export async function deleteSheet(sheetId: string) {
   await writeRelations(relations)
 }
 
-export async function saveAsset(filename: string, buffer: Buffer) {
+function classifyAssetDir(filename: string) {
+  const ext = path.extname(filename).toLowerCase()
+  if (IMAGE_EXTS.has(ext)) return 'imgs'
+  if (VIDEO_EXTS.has(ext)) return 'video'
+  return OTHER_ASSET_DIR
+}
+
+async function findAssetAnywhere(name: string, paths: PathBundle): Promise<string | null> {
+  const targets = [
+    path.join(paths.root, name),
+    path.join(paths.root, 'assets', name),
+    path.join(paths.contentDir, name)
+  ]
+  for (const cand of targets) {
+    if (await pathExists(cand)) return cand
+  }
+  const stack = [paths.contentDir]
+  while (stack.length) {
+    const current = stack.pop()!
+    let entries: fs.Dirent[]
+    try {
+      entries = await fs.readdir(current, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name)
+      if (entry.isDirectory()) {
+        stack.push(full)
+      } else if (entry.isFile() && path.basename(entry.name) === name) {
+        return full
+      }
+    }
+  }
+  return null
+}
+
+export async function saveAsset(filename: string, buffer: Buffer, occurredAt?: string) {
   await ensureSheetMetaFile()
-  const { assetsDir, root } = await getPaths()
-  const target = path.join(assetsDir, filename)
+  await migrateLegacyData()
+  await normalizeDiaryPlacement()
+  const paths = await getPaths()
+  const { year, month, day } = formatDateParts(occurredAt)
+  const monthKey = `${year}${month}`
+  const dayKey = `${year}${month}${day}`
+  const dayDir = path.join(paths.contentDir, year, monthKey, dayKey)
+  await ensureDayStructure(dayDir)
+  const subdir = classifyAssetDir(filename)
+  const targetDir = path.join(dayDir, subdir)
+  await fs.mkdir(targetDir, { recursive: true })
+  const target = path.join(targetDir, filename)
   await fs.writeFile(target, buffer)
-  const relative = path.relative(root, target).split(path.sep).join('/')
+  const relative = path.relative(paths.root, target).split(path.sep).join('/')
   return { absolute: target, relative }
+}
+
+// ---------- Legacy migration (dailyReport/assets/relations.json -> content/post/... + relations/relations.json)
+let migratedLegacy = false
+async function migrateLegacyData() {
+  // Always allow a normalization pass to fix misplaced files (even if already migrated)
+  // but skip if we already normalized within this process lifecycle.
+  if (migratedLegacy) return
+  const paths = await getPaths()
+  const legacyDiaries = path.join(paths.root, 'dailyReport')
+  const legacyAssets = path.join(paths.root, 'assets')
+  const legacyRelations = path.join(paths.root, 'relations.json')
+  const legacyContentPost = path.join(paths.root, 'content', 'post')
+  const legacyMeta = path.join(paths.root, 'table', 'meta.json')
+  const rootEntries = await fs.readdir(paths.root, { withFileTypes: true }).catch(() => [])
+  const hasLooseMedia = rootEntries.some((entry) => {
+    if (!entry.isFile()) return false
+    const ext = path.extname(entry.name).toLowerCase()
+    return IMAGE_EXTS.has(ext) || VIDEO_EXTS.has(ext)
+  })
+  const hasLegacy =
+    (await pathExists(legacyDiaries)) ||
+    (await pathExists(legacyAssets)) ||
+    (await pathExists(legacyRelations)) ||
+    (await pathExists(legacyContentPost)) ||
+    (await pathExists(legacyMeta)) ||
+    hasLooseMedia
+  if (!hasLegacy) {
+    migratedLegacy = true
+    return
+  }
+
+  await ensureBaseFiles()
+  pathCache = paths
+
+  // Move relations.json
+  if (await pathExists(legacyRelations)) {
+    await fs.mkdir(paths.relationsDir, { recursive: true })
+    await fs.rename(legacyRelations, paths.relationsFile).catch(async () => {
+      // fallback copy if rename across devices
+      const raw = await fs.readFile(legacyRelations, 'utf8')
+      await fs.writeFile(paths.relationsFile, raw, 'utf8')
+      await fs.rm(legacyRelations, { force: true })
+    })
+  }
+
+  // Move meta.json from table to relations
+  if (await pathExists(legacyMeta)) {
+    if (!(await pathExists(paths.sheetMetaFile))) {
+      await fs.mkdir(paths.relationsDir, { recursive: true })
+      await fs.rename(legacyMeta, paths.sheetMetaFile).catch(async () => {
+        const raw = await fs.readFile(legacyMeta, 'utf8')
+        await fs.writeFile(paths.sheetMetaFile, raw, 'utf8')
+      })
+    } else {
+      await fs.rm(legacyMeta, { force: true }).catch(() => {})
+    }
+  }
+
+  // Move diaries and attachments
+  const migratedDates: string[] = []
+  const migrateFiles = async (baseDir: string) => {
+    const entries = await fs.readdir(baseDir, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith('.md')) {
+        const legacyPath = path.join(baseDir, entry.name)
+        const raw = await fs.readFile(legacyPath, 'utf8')
+        const parsed = matter(raw)
+        const occurredAt = normalizeOccurredAt(parsed.data.occurredAt as string | undefined, legacyPath)
+        const parentId =
+          typeof parsed.data.parentId === 'string' && parsed.data.parentId.trim().length > 0 ? parsed.data.parentId : null
+        const isChild = Boolean(parentId) || baseDir.includes(`${path.sep}children`)
+        const { filePath } = await ensureDiaryPath(parsed.data.title as string, occurredAt, isChild)
+        migratedDates.push(occurredAt)
+
+        const moveAsset = async (assetPath: string | undefined) => {
+          if (!assetPath) return assetPath
+          const normalized = assetPath.replace(/^\/+/, '')
+          const absLegacy = path.isAbsolute(normalized) ? normalized : path.join(paths.root, normalized)
+          const exists = await pathExists(absLegacy)
+          if (!exists) return assetPath
+          const { year, month, day } = formatDateParts(occurredAt)
+          const monthKey = `${year}${month}`
+          const dayKey = `${year}${month}${day}`
+          const dayDir = path.join(paths.contentDir, year, monthKey, dayKey)
+          await ensureDayStructure(dayDir)
+          const subdir = classifyAssetDir(normalized)
+          const targetDir = path.join(dayDir, subdir)
+          await fs.mkdir(targetDir, { recursive: true })
+          const target = path.join(targetDir, path.basename(normalized))
+          await fs.rename(absLegacy, target).catch(async () => {
+            const buf = await fs.readFile(absLegacy)
+            await fs.writeFile(target, buf)
+          })
+          return path.relative(paths.root, target).split(path.sep).join('/')
+        }
+
+        const attachments = Array.isArray(parsed.data.attachments) ? (parsed.data.attachments as string[]) : []
+        const movedAttachments: string[] = []
+        for (const item of attachments) {
+          const moved = await moveAsset(item)
+          if (moved) movedAttachments.push(moved)
+        }
+        const coverMoved = await moveAsset(typeof parsed.data.cover === 'string' ? parsed.data.cover : undefined)
+
+        const frontmatter: Record<string, unknown> = { ...parsed.data, attachments: movedAttachments }
+        if (coverMoved) {
+          frontmatter.cover = coverMoved
+        } else {
+          delete frontmatter.cover
+        }
+        Object.keys(frontmatter).forEach((key) => {
+          if (frontmatter[key] === undefined) {
+            delete frontmatter[key]
+          }
+        })
+        const nextPayload = matter.stringify(parsed.content, frontmatter)
+        await fs.writeFile(filePath, nextPayload, 'utf8')
+        await fs.rm(legacyPath, { force: true })
+      } else if (entry.isDirectory()) {
+        await migrateFiles(path.join(baseDir, entry.name))
+      }
+    }
+  }
+
+  await migrateFiles(legacyDiaries)
+  await migrateFiles(legacyContentPost)
+
+  // Normalize diaries that may have landed on wrong date folders
+  await normalizeDiaryPlacement()
+
+  // Move loose media under root (e.g., demo.mp4/demo.png)
+  let fallbackDate = migratedDates.length > 0 ? migratedDates.sort()[0] : undefined
+  if (!fallbackDate) {
+    const existing = await collectDiaryFiles()
+    if (existing.length > 0) {
+      const first = existing[0]
+      const { year, month, day } = parseDateFromPath(paths.contentDir, first.filePath)
+      fallbackDate = new Date(`${year}-${month}-${day}`).toISOString()
+    }
+  }
+  fallbackDate = fallbackDate ?? new Date().toISOString()
+  const dealWithLooseMedia = async () => {
+    const entries = await fs.readdir(paths.root, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      const name = entry.name.toLowerCase()
+      const ext = path.extname(name)
+      if (!IMAGE_EXTS.has(ext) && !VIDEO_EXTS.has(ext)) continue
+      const absLegacy = path.join(paths.root, entry.name)
+      const { year, month, day } = formatDateParts(fallbackDate)
+      const monthKey = `${year}${month}`
+      const dayKey = `${year}${month}${day}`
+      const dayDir = path.join(paths.contentDir, year, monthKey, dayKey)
+      await ensureDayStructure(dayDir)
+      const subdir = classifyAssetDir(name)
+      const targetDir = path.join(dayDir, subdir)
+      await fs.mkdir(targetDir, { recursive: true })
+      const target = path.join(targetDir, entry.name)
+      await fs.rename(absLegacy, target).catch(async () => {
+        const buf = await fs.readFile(absLegacy)
+        await fs.writeFile(target, buf)
+      })
+    }
+  }
+
+  await dealWithLooseMedia()
+
+  // Cleanup legacy folders
+  await fs.rm(legacyDiaries, { recursive: true, force: true }).catch(() => {})
+  await fs.rm(legacyAssets, { recursive: true, force: true }).catch(() => {})
+  await fs.rm(legacyContentPost, { recursive: true, force: true }).catch(() => {})
+  migratedLegacy = true
+}
+
+async function normalizeDiaryPlacement() {
+  const paths = await getPaths()
+  const files = await collectDiaryFiles()
+  for (const file of files) {
+    const isChild = file.isChild || file.filePath.includes(`${path.sep}children${path.sep}`)
+    const raw = await fs.readFile(file.filePath, 'utf8')
+    const parsed = matter(raw)
+    const occurredAt = normalizeOccurredAt(parsed.data.occurredAt as string | undefined, file.filePath)
+    const { year, month, day } = formatDateParts(occurredAt)
+    const monthKey = `${year}${month}`
+    const dayKey = `${year}${month}${day}`
+    const expectedDir = isChild
+      ? path.join(paths.contentDir, year, monthKey, dayKey, 'children')
+      : path.join(paths.contentDir, year, monthKey, dayKey)
+    await ensureDayStructure(path.join(paths.contentDir, year, monthKey, dayKey))
+    const basename = path.basename(file.filePath)
+    let targetPath = path.join(expectedDir, basename)
+    let counter = 1
+    while ((await pathExists(targetPath)) && path.resolve(targetPath) !== path.resolve(file.filePath)) {
+      const name = path.parse(basename).name
+      const ext = path.parse(basename).ext
+      targetPath = path.join(expectedDir, `${name}-${counter}${ext}`)
+      counter += 1
+    }
+
+    const moveAsset = async (assetPath: string | undefined) => {
+      if (!assetPath) return assetPath
+      const normalized = assetPath.replace(/^\/+/, '')
+      let abs = path.isAbsolute(normalized) ? normalized : path.join(paths.root, normalized)
+      if (!(await pathExists(abs))) {
+        const found = await findAssetAnywhere(path.basename(normalized), paths)
+        if (!found) return assetPath
+        abs = found
+      }
+      const subdir = classifyAssetDir(normalized)
+      const targetDir = path.join(paths.contentDir, year, monthKey, dayKey, subdir)
+      await fs.mkdir(targetDir, { recursive: true })
+      const target = path.join(targetDir, path.basename(normalized))
+      if (path.resolve(target) === path.resolve(abs)) return assetPath
+      await fs.rename(abs, target).catch(async () => {
+        const buf = await fs.readFile(abs)
+        await fs.writeFile(target, buf)
+        await fs.rm(abs, { force: true })
+      })
+      return path.relative(paths.root, target).split(path.sep).join('/')
+    }
+
+    const attachments = Array.isArray(parsed.data.attachments) ? (parsed.data.attachments as string[]) : []
+    const movedAttachments: string[] = []
+    for (const att of attachments) {
+      const moved = await moveAsset(att)
+      movedAttachments.push(moved ?? att)
+    }
+    const coverMoved = await moveAsset(typeof parsed.data.cover === 'string' ? parsed.data.cover : undefined)
+    if (movedAttachments.length > 0 || coverMoved !== parsed.data.cover) {
+      parsed.data.attachments = movedAttachments
+      if (coverMoved) parsed.data.cover = coverMoved
+      else delete parsed.data.cover
+      const nextPayload = matter.stringify(parsed.content, parsed.data)
+      await fs.writeFile(file.filePath, nextPayload, 'utf8')
+    }
+
+    // Fix inline media references without path (e.g., demo.png / demo.mp4)
+    const inlineRegex =
+      /([A-Za-z0-9_.-]+\.(?:png|jpg|jpeg|gif|webp|svg|avif|mp4|mov|webm|m4v|avi|mkv))/gi
+    let updatedContent = parsed.content
+    let replaced = false
+    const matches = Array.from(new Set([...parsed.content.matchAll(inlineRegex)].map((m) => m[1]))).filter(
+      (p) => p && !p.includes('/')
+    )
+    for (const name of matches) {
+      const destSubdir = classifyAssetDir(name)
+      const targetDir = path.join(paths.contentDir, year, monthKey, dayKey, destSubdir)
+      await fs.mkdir(targetDir, { recursive: true })
+      const target = path.join(targetDir, name)
+
+      let movedPath: string | null = null
+      const found = await findAssetAnywhere(name, paths)
+      if (found) {
+        if (path.resolve(found) !== path.resolve(target)) {
+          await fs.rename(found, target).catch(async () => {
+            const buf = await fs.readFile(found)
+            await fs.writeFile(target, buf)
+            await fs.rm(found, { force: true })
+          })
+        }
+        movedPath = target
+      }
+      if (movedPath) {
+        const relativePath = path.relative(path.dirname(file.filePath), movedPath).split(path.sep).join('/')
+        const nextPath = relativePath.startsWith('.') ? relativePath : `./${relativePath}`
+        updatedContent = updatedContent.split(name).join(nextPath)
+        replaced = true
+      }
+    }
+    if (replaced) {
+      const nextPayload = matter.stringify(updatedContent, parsed.data)
+      await fs.writeFile(file.filePath, nextPayload, 'utf8')
+    }
+
+    if (path.resolve(targetPath) !== path.resolve(file.filePath)) {
+      await fs.rename(file.filePath, targetPath).catch(async () => {
+        const buf = await fs.readFile(file.filePath)
+        await fs.writeFile(targetPath, buf)
+        await fs.rm(file.filePath, { force: true })
+      })
+    }
+  }
+  await cleanupEmptyDayDirectories()
+}
+
+async function cleanupEmptyDayDirectories() {
+  const paths = await getPaths()
+  async function isDirEmpty(dir: string) {
+    const items = await fs.readdir(dir).catch(() => [])
+    if (items.length === 0) return true
+    let nonEmpty = false
+    for (const item of items) {
+      const full = path.join(dir, item)
+      const stat = await fs.lstat(full).catch(() => null)
+      if (!stat) continue
+      if (stat.isDirectory()) {
+        const childEmpty = await isDirEmpty(full)
+        if (childEmpty) {
+          await fs.rm(full, { recursive: true, force: true }).catch(() => {})
+        } else {
+          nonEmpty = true
+        }
+      } else {
+        nonEmpty = true
+      }
+    }
+    const remaining = await fs.readdir(dir).catch(() => [])
+    return !nonEmpty && remaining.length === 0
+  }
+
+  const yearDirs = await fs.readdir(paths.contentDir, { withFileTypes: true }).catch(() => [])
+  for (const year of yearDirs.filter((d) => d.isDirectory())) {
+    const yearPath = path.join(paths.contentDir, year.name)
+    const monthDirs = await fs.readdir(yearPath, { withFileTypes: true }).catch(() => [])
+    for (const month of monthDirs.filter((d) => d.isDirectory())) {
+      const monthPath = path.join(yearPath, month.name)
+      const dayDirs = await fs.readdir(monthPath, { withFileTypes: true }).catch(() => [])
+      for (const day of dayDirs.filter((d) => d.isDirectory())) {
+        const dayPath = path.join(monthPath, day.name)
+        const empty = await isDirEmpty(dayPath)
+        if (empty) {
+          await fs.rm(dayPath, { recursive: true, force: true }).catch(() => {})
+        }
+      }
+      const remainingDays = await fs.readdir(monthPath).catch(() => [])
+      if (remainingDays.length === 0) {
+        await fs.rm(monthPath, { recursive: true, force: true }).catch(() => {})
+      }
+    }
+    const remainingMonths = await fs.readdir(yearPath).catch(() => [])
+    if (remainingMonths.length === 0) {
+      await fs.rm(yearPath, { recursive: true, force: true }).catch(() => {})
+    }
+  }
 }

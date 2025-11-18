@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.45.0",
+    "archiver": "^7.0.1",
     "clsx": "^2.1.1",
     "date-fns": "^3.6.0",
     "echarts": "^5.5.0",
@@ -24,6 +25,7 @@
     "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@types/archiver": "^7.0.0",
     "@types/mime-types": "^2.1.4",
     "@types/node": "20.11.30",
     "@types/react": "18.2.66",

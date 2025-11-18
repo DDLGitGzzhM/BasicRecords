@@ -198,8 +198,9 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
     setError(null)
     try {
       const uploaded: string[] = []
+      const occurredAt = form.occurredAt || new Date().toISOString()
       for (const file of Array.from(files)) {
-        const path = await uploadAsset(file)
+        const path = await uploadAsset(file, occurredAt)
         uploaded.push(path)
         if (target === 'attachments') {
           const isVideo = file.name.toLowerCase().match(/\.(mp4|mov|webm)$/)

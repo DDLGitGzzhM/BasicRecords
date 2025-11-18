@@ -23,18 +23,23 @@
    # 或 ./scripts/dev.sh
    ```
    若需单独运行，可使用 `pnpm --filter @basicrecords/web dev` 与 `task backend:dev`。
-3. 浏览 `http://localhost:3000`，默认跳转 `/diary`。顶栏切换四个页面并支持黑/白主题；数据根目录默认指向 `content-demo`（可在设置页或 `task demo:reset` 恢复），自动加载 `package: dailyReport`（Markdown 日记）、`package: table`（CSV 指标）、`relations.json` 关系文件及 `assets/` 附件。
+3. 浏览 `http://localhost:3000`，默认跳转 `/diary`。顶栏切换四个页面并支持黑/白主题；数据根目录默认指向 `content-demo`（可在设置页或 `task demo:reset` 恢复），自动加载 Hugo 风格的 Markdown 日记、`table/*.csv` 指标与 `relations` 关系包。
 
 ## 数据根目录结构
 - 根目录通过 `krecord.config.json`（或设置页内的“数据根目录”输入框）指定，默认值为 `./content-demo`。
 - 目录规范：
   ```
   <data-root>/
-    ├─ dailyReport/      # package: dailyReport，所有 Markdown (*.md)
-    ├─ table/            # package: table，所有 CSV (*.csv)
-    ├─ assets/           # 上传的图片 / 视频 / 音频
-    └─ relations.json    # Sheet 行 ↔ 日记的关系映射
+    ├─ content/
+    │   └─ <year>/<yyyymm>/<yyyymmdd>/[#children]/0xNN-<title>.md   # Markdown 日记，母/子日记按日期分目录
+    │       ├─ imgs/ | video/ | files/                             # 同日媒体，正文/封面/附件均引用相对路径
+    ├─ table/*.csv       # 指标数据
+    └─ relations/
+        ├─ relations.json    # Sheet 行 ↔ 日记的关系映射
+        └─ meta.json         # Sheet 元信息
   ```
+  - 日记文件名以 `0xNN-<title>` 形式生成，标题中的特殊符号以 `_` 代替，避免重名；上传接口会根据发生时间写入对应日期目录。
+  - 附件/封面/正文内嵌媒体统一落在当日的 `imgs/` / `video/` / `files/`，导出 ZIP 时保持该结构。
 - 如果用户尚未指定自定义路径，则自动使用项目内的 Demo 数据；切换路径后刷新页面即可重新载入。执行 `task demo:reset`（或 `./scripts/reset-demo.sh`）也能快速写回默认路径。
 
 ## 配置

@@ -1,12 +1,13 @@
 'use client'
 
 import { useState } from 'react'
-import { updateRootPath } from '@/lib/api'
+import { exportDataPackage, updateRootPath } from '@/lib/api'
 
 export function SettingsPanel({ initialRoot, defaultRoot }: { initialRoot: string; defaultRoot: string }) {
   const [rootPath, setRootPath] = useState(initialRoot)
   const [status, setStatus] = useState<string>('')
   const [pending, setPending] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const persist = async (path: string) => {
     setPending(true)
@@ -23,6 +24,27 @@ export function SettingsPanel({ initialRoot, defaultRoot }: { initialRoot: strin
     }
   }
 
+  const handleExport = async () => {
+    setExporting(true)
+    setStatus('')
+    try {
+      const { blob, filename } = await exportDataPackage()
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+      setStatus('数据已打包为 ZIP，可备份到本地或同步磁盘。')
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : '导出失败')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="section-card">
       <div className="page-heading">
@@ -30,8 +52,8 @@ export function SettingsPanel({ initialRoot, defaultRoot }: { initialRoot: strin
           <p className="text-xs uppercase tracking-[0.3em] text-[var(--text-muted)]">Control</p>
           <h2 className="text-3xl font-semibold">设置 / 备份</h2>
         </div>
-        <button className="action-button" type="button">
-          导出 .krecord
+        <button className="action-button" type="button" onClick={handleExport} disabled={exporting}>
+          {exporting ? '正在打包...' : '导出 .krecord'}
         </button>
       </div>
       <div className="grid gap-4 md:grid-cols-2">

@@ -7,6 +7,8 @@ function sanitizeFilename(name: string) {
 }
 
 export async function POST(req: Request) {
+  const { searchParams } = new URL(req.url)
+  const occurredAt = searchParams.get('occurredAt') ?? undefined
   const formData = await req.formData()
   const file = formData.get('file')
   if (!(file instanceof File)) {
@@ -16,6 +18,6 @@ export async function POST(req: Request) {
   const buffer = Buffer.from(arrayBuffer)
   const basename = sanitizeFilename(file.name || `asset-${Date.now()}`)
   const key = `${Date.now()}-${basename}`
-  const { relative } = await saveAsset(key, buffer)
+  const { relative } = await saveAsset(key, buffer, occurredAt ?? undefined)
   return NextResponse.json({ data: { path: relative.replace(/\\/g, '/') } }, { status: 201 })
 }
