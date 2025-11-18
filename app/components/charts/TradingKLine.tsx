@@ -6,6 +6,7 @@ import { CandlestickChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, DataZoomComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { MetricPoint } from '@/lib/types'
+import type { Timeframe } from '@/lib/sheets'
 import { useThemeMode } from '@/components/providers/ThemeProvider'
 
 echarts.use([CandlestickChart, GridComponent, TooltipComponent, DataZoomComponent, CanvasRenderer])
@@ -13,10 +14,11 @@ echarts.use([CandlestickChart, GridComponent, TooltipComponent, DataZoomComponen
 type Props = {
   data: MetricPoint[]
   compact?: boolean
+  timeframe?: Timeframe
   onSelectDate?: (date: string, events?: string[]) => void
 }
 
-export function TradingKLine({ data, compact = false, onSelectDate }: Props) {
+export function TradingKLine({ data, compact = false, timeframe = 'day', onSelectDate }: Props) {
   const ref = useRef<HTMLDivElement | null>(null)
   const { theme } = useThemeMode()
 
@@ -39,6 +41,12 @@ export function TradingKLine({ data, compact = false, onSelectDate }: Props) {
           },
     [theme]
   )
+
+  const labelFormatter = useMemo(() => {
+    if (timeframe === 'month') return (value: string) => value.slice(0, 7)
+    if (timeframe === 'week') return (value: string) => value.slice(5, 10)
+    return (value: string) => value.slice(5, 10)
+  }, [timeframe])
 
   useEffect(() => {
     if (!ref.current) return
@@ -63,7 +71,7 @@ export function TradingKLine({ data, compact = false, onSelectDate }: Props) {
           color: palette.text,
           fontSize: 10,
           interval: 0,
-          formatter: (value: string) => value.slice(5, 10)
+          formatter: labelFormatter
         }
       },
       yAxis: {
@@ -81,8 +89,8 @@ export function TradingKLine({ data, compact = false, onSelectDate }: Props) {
       series: [
         {
           type: 'candlestick',
-          barWidth: compact ? '60%' : '55%',
-          barCategoryGap: '5%',
+          barWidth: '100%',
+          barCategoryGap: '0%',
           itemStyle: {
             color: palette.rise,
             color0: palette.fall,
@@ -120,7 +128,7 @@ export function TradingKLine({ data, compact = false, onSelectDate }: Props) {
       window.removeEventListener('resize', handleResize)
       chart.dispose()
     }
-  }, [compact, data, onSelectDate, palette])
+  }, [compact, data, labelFormatter, onSelectDate, palette])
 
   return <div ref={ref} className={compact ? 'h-64 w-full' : 'h-80 w-full'} />
 }

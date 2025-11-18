@@ -10,7 +10,7 @@ import {
   updateSheetClient,
   updateSheetRowClient
 } from '@/lib/api'
-import { sheetToMetricSeries } from '@/lib/sheets'
+import { Timeframe, sheetToMetricSeries } from '@/lib/sheets'
 import type { DiaryEntry, SheetDefinition, SheetRow } from '@/lib/types'
 import { TradingKLine } from '@/components/charts/TradingKLine'
 import { DiaryModal } from '@/components/diary/DiaryModal'
@@ -44,6 +44,7 @@ export function SheetsBoard({ initialSheets, diaries }: { initialSheets: SheetDe
   })
   const [newSheetForm, setNewSheetForm] = useState({ name: '', description: '' })
   const [refInput, setRefInput] = useState('')
+  const [klineTimeframe, setKlineTimeframe] = useState<Timeframe>('day')
   const [klineSelection, setKlineSelection] = useState<{ date: string; diaryIds: string[] } | null>(null)
   const [activeDiary, setActiveDiary] = useState<DiaryEntry | null>(null)
   const [sheetModalOpen, setSheetModalOpen] = useState(false)
@@ -212,7 +213,10 @@ export function SheetsBoard({ initialSheets, diaries }: { initialSheets: SheetDe
     return Object.fromEntries(diaries.map((diary) => [diary.id, diary]))
   }, [diaries])
 
-  const metricSeries = useMemo(() => (activeSheet ? sheetToMetricSeries(activeSheet) : []), [activeSheet])
+  const metricSeries = useMemo(
+    () => (activeSheet ? sheetToMetricSeries(activeSheet, klineTimeframe) : []),
+    [activeSheet, klineTimeframe]
+  )
   const mergedSelectionRefs = useMemo(() => {
     if (!activeSheet || !klineSelection) return []
     const rowRefs = activeSheet.rows.find((r) => r.date === klineSelection.date)?.diaryRefs ?? []
@@ -228,6 +232,10 @@ export function SheetsBoard({ initialSheets, diaries }: { initialSheets: SheetDe
     () => mergedSelectionRefs.map((id) => diaryMap[id]).filter(Boolean),
     [mergedSelectionRefs, diaryMap]
   )
+
+  useEffect(() => {
+    setKlineSelection(null)
+  }, [klineTimeframe])
 
   return (
     <div className="grid gap-6">
@@ -377,14 +385,37 @@ export function SheetsBoard({ initialSheets, diaries }: { initialSheets: SheetDe
               <p className="text-xs uppercase tracking-[0.3em] text-[var(--text-muted)]">K Line</p>
               <h2 className="text-3xl font-semibold">{activeSheet.name} · K 线</h2>
             </div>
-            <p className="text-sm text-[var(--text-muted)]">间距对齐 TradingView，并可用于趋势页叠加。</p>
+            <div className="flex flex-col items-end gap-2 text-sm text-[var(--text-muted)]">
+              <p>蜡烛无间隔，支持日 / 周 / 月聚合。周/月点击将跳转对应日记视图。</p>
+              <div className="flex items-center gap-2">
+                <span className="text-xs">聚合</span>
+                {(['day', 'week', 'month'] as const).map((tf) => (
+                  <button
+                    key={tf}
+                    type="button"
+                    className={`badge ${klineTimeframe === tf ? 'is-active' : ''}`}
+                    onClick={() => setKlineTimeframe(tf)}
+                  >
+                    {tf === 'day' ? '日' : tf === 'week' ? '周' : '月'}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
           <TradingKLine
             data={metricSeries}
             compact
-            onSelectDate={(date, events) => setKlineSelection({ date, diaryIds: events ?? [] })}
+            timeframe={klineTimeframe}
+            onSelectDate={(date, events) => {
+              if (klineTimeframe === 'day') {
+                setKlineSelection({ date, diaryIds: events ?? [] })
+              } else {
+                const layout = klineTimeframe === 'week' ? 'week' : 'month'
+                router.push(`/diary?layout=${layout}&focus=${date}`)
+              }
+            }}
           />
-          {klineSelection && (
+          {klineTimeframe === 'day' && klineSelection && (
             <div className="mt-3">
               <p className="text-sm text-[var(--text-muted)] mb-2">
                 {klineSelection.date} · {diariesForSelection.length} 条关联日记

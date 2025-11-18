@@ -80,6 +80,7 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
   const [expandedParentId, setExpandedParentId] = useState<string | null>(null)
   const [formOpen, setFormOpen] = useState(false)
   const [layout, setLayout] = useState<'list' | 'week' | 'month'>('list')
+  const [referenceDate, setReferenceDate] = useState<Date>(() => new Date())
   const [page, setPage] = useState(0)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
   const coverInputRef = useRef<HTMLInputElement>(null)
@@ -125,10 +126,26 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
   }, [sortedRoots])
   const groupedMap = useMemo(() => Object.fromEntries(groupedByDate), [groupedByDate])
 
-  const referenceDate = useMemo(() => {
+  const latestDateFromData = useMemo(() => {
     const top = sortedRoots[0]?.occurredAt
     return top ? new Date(top) : new Date()
   }, [sortedRoots])
+
+  useEffect(() => {
+    const layoutParam = searchParams.get('layout')
+    if (layoutParam === 'week' || layoutParam === 'month' || layoutParam === 'list') {
+      setLayout(layoutParam)
+    }
+    const focusParam = searchParams.get('focus')
+    if (focusParam) {
+      const parsed = new Date(focusParam)
+      if (!Number.isNaN(parsed.getTime())) {
+        setReferenceDate(parsed)
+        return
+      }
+    }
+    setReferenceDate(latestDateFromData)
+  }, [latestDateFromData, searchParams])
 
   const weekDates = useMemo(() => {
     const day = (referenceDate.getDay() + 6) % 7 // Monday = 0
