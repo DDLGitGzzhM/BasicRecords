@@ -13,7 +13,7 @@ export async function POST(req: Request) {
   }
   const entry = await appendDiaryEntry({
     title: body.title,
-    mood: body.mood ?? 'Neutral',
+    mood: typeof body.mood === 'string' ? body.mood : undefined,
     tags: Array.isArray(body.tags) ? body.tags : [],
     attachments: Array.isArray(body.attachments) ? body.attachments : [],
     occurredAt: body.occurredAt,
@@ -31,7 +31,7 @@ export async function PATCH(req: Request) {
   }
   const updated = await updateDiaryEntry(body.id, {
     title: body.title,
-    mood: body.mood,
+    mood: typeof body.mood === 'string' ? body.mood : undefined,
     tags: Array.isArray(body.tags) ? body.tags : undefined,
     attachments: Array.isArray(body.attachments) ? body.attachments : undefined,
     occurredAt: body.occurredAt,

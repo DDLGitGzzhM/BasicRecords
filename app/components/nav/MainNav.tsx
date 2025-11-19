@@ -36,30 +36,25 @@ export default function MainNav() {
   }
 
   return (
-    <header className="section-card">
-      <div className="flex flex-col gap-2 mb-4">
-        <p className="text-xs uppercase tracking-[0.35em] text-[var(--text-muted)]">K-Record</p>
-        <h1 className="text-4xl font-semibold">事件 × 指标 × K 线</h1>
-        <p className="text-[var(--text-muted)]">
-          按页面拆分日记 / 表格 / 趋势 / 设置，确保本地事件、指标与 K 线可控并随时聚焦。
-        </p>
-      </div>
-      <nav className="flex flex-wrap gap-2 items-center">
+    <div className="stack-nav-inner">
+      <nav className="stack-nav-links stack-nav-links--compact">
         {NAV_ITEMS.map((item) => {
           const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
           return (
-            <Link key={item.href} href={item.href} className={clsx('badge', isActive && 'is-active')}>
+            <Link key={item.href} href={item.href} className={clsx('stack-nav-link', isActive && 'is-active')}>
               {item.label}
             </Link>
           )
         })}
-        <button className="badge" onClick={toggleTheme} type="button">
+      </nav>
+      <div className="stack-nav-actions stack-nav-links--compact">
+        <button className="stack-nav-link" onClick={toggleTheme} type="button">
           {toggleLabel}
         </button>
-        <button className="badge" onClick={handleLoadDemo} type="button" disabled={demoPending}>
+        <button className="stack-nav-link" onClick={handleLoadDemo} type="button" disabled={demoPending}>
           {demoPending ? '加载中…' : '加载 Demo 数据'}
         </button>
-      </nav>
-    </header>
+      </div>
+    </div>
   )
 }

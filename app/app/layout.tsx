@@ -22,8 +22,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
         <ThemeProvider>
           <div className="app-shell">
-            <MainNav />
-            <main>{children}</main>
+            <aside className="stack-nav">
+              <MainNav />
+            </aside>
+            <main className="stack-main">{children}</main>
           </div>
         </ThemeProvider>
       </body>

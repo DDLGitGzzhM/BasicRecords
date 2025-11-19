@@ -13,7 +13,6 @@ import { format } from 'date-fns'
 
 const createDefaultForm = () => ({
   title: '',
-  mood: '',
   tags: '',
   occurredAt: '',
   parentId: '',
@@ -29,13 +28,7 @@ const toDateInputValue = (value: string) => {
   return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16)
 }
 
-const normalizeSrc = (src?: string) => {
-  if (!src) return ''
-  if (/^(https?:|data:|file:)/.test(src)) return src
-  if (src.startsWith('/api/assets/')) return src
-  const normalized = src.replace(/^\.\/+/, '').replace(/^\/+/, '').replace(/\\/g, '/')
-  return `/api/assets/${normalized}`
-}
+const normalizeSrc = (src?: string) => (src ? resolveAssetUrl(src) : '')
 
 const toDateKey = (value: string | Date) => {
   if (typeof value === 'string') return value.slice(0, 10)
@@ -234,7 +227,6 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
       const occurredAt = form.occurredAt ? new Date(form.occurredAt).toISOString() : new Date().toISOString()
       const payload = {
         title: form.title,
-        mood: form.mood || 'Neutral',
         tags: form.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
         attachments: form.attachments,
         occurredAt,
@@ -265,11 +257,10 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
     setEditingId(entry.id)
     setForm({
       title: entry.title,
-      mood: entry.mood,
       tags: entry.tags.join(','),
       occurredAt: toDateInputValue(entry.occurredAt),
       parentId: entry.parentId ?? '',
-      content: entry.content,
+        content: entry.content,
       attachments: entry.attachments,
       cover: entry.cover ?? ''
     })
@@ -307,23 +298,35 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
     }
   }
 
+  const handleCloseForm = () => {
+    setFormOpen(false)
+    setError(null)
+    if (!editingId) {
+      setForm(createDefaultForm())
+    }
+  }
+
+  const totalEntries = items.length
+
   return (
-    <div className="section-card">
-      <div className="page-heading">
-        <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-[var(--text-muted)]">Markdown Diary</p>
-          <h2 className="text-3xl font-semibold">Markdown 日记</h2>
-        </div>
-        <p className="text-[var(--text-muted)] text-sm">
-          数据自动加载 `package: dailyReport | table | relations.json`，支持母子日记与正文内嵌图片/视频。
+    <div className="stack-layout">
+      <aside className="stack-meta">
+        <p className="stack-eyebrow">Daily Stack</p>
+        <h1 className="stack-title">Markdown 日记</h1>
+        <p className="stack-description">
+          数据自动加载 <code>dailyReport / table / relations.json</code>，支持母子结构、内嵌媒体与 CSV 关联。
         </p>
-      </div>
-      <div className="mb-6">
-        <div className="flex flex-wrap gap-3 items-center">
+        <div className="stack-stats">
+          <span>共 {totalEntries} 条记录</span>
+          <span>母日记 {rootEntries.length}</span>
+        </div>
+      </aside>
+      <div className="stack-content">
+        <div className="stack-toolbar">
           <button className="action-button" type="button" onClick={() => setFormOpen(true)}>
             {editingId ? '继续编辑日记' : '新建日记'}
           </button>
-          <div className="flex gap-2">
+          <div className="stack-layout-switch">
             {(['list', 'week', 'month'] as const).map((mode) => (
               <button
                 key={mode}
@@ -331,83 +334,27 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
                 type="button"
                 onClick={() => setLayout(mode)}
               >
-                {mode === 'list' ? '列表' : mode === 'week' ? '周级缩略' : '月级缩略'}
+                {mode === 'list' ? '列表视图' : mode === 'week' ? '周缩略' : '月缩略'}
               </button>
             ))}
           </div>
         </div>
-      </div>
 
-      {formOpen && (
-        <div className="diary-modal-backdrop" onClick={() => setFormOpen(false)}>
-          <div className="diary-modal max-w-6xl" onClick={(e) => e.stopPropagation()}>
-            <div className="grid md:grid-cols-2 gap-4">
-              <form className="grid gap-3" onSubmit={handleSubmit}>
-                <div className="grid md:grid-cols-2 gap-3">
-                  <input name="title" placeholder="标题" value={form.title} onChange={handleChange} required />
-                  <input name="mood" placeholder="情绪（可选）" value={form.mood} onChange={handleChange} />
+        {formOpen && (
+        <div className="diary-modal-backdrop is-fullscreen" onClick={handleCloseForm}>
+          <div className="diary-modal diary-editor-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="workspace-shell">
+              <div className="workspace-header">
+                <div className="workspace-heading">
+                  <p className="text-xs uppercase tracking-[0.3em] text-[var(--text-muted)]">Markdown Workbench</p>
+                  <h3 className="text-2xl font-semibold">
+                    {editingId ? '更新日记' : '新建日记'}
+                    {form.title ? ` · ${form.title}` : ''}
+                  </h3>
                 </div>
-                <div className="grid md:grid-cols-2 gap-3">
-                  <input name="tags" placeholder="标签（用逗号分隔）" value={form.tags} onChange={handleChange} />
-                  <input
-                    name="occurredAt"
-                    type="datetime-local"
-                    placeholder="发生时间"
-                    value={form.occurredAt}
-                    onChange={handleChange}
-                  />
-                </div>
-                <select name="parentId" value={form.parentId} onChange={handleChange}>
-                  <option value="">无母日记（独立记录）</option>
-                  {sortedRoots.map((entry) => (
-                    <option key={entry.id} value={entry.id}>
-                      {entry.title} · {new Date(entry.occurredAt).toLocaleDateString()}
-                    </option>
-                  ))}
-                </select>
-                <textarea
-                  ref={editorRef}
-                  name="content"
-                  placeholder="Markdown 正文（支持 # 标题、- 列表、``` 代码等）"
-                  value={form.content}
-                  onChange={handleChange}
-                  rows={8}
-                />
-                <div className="editor-toolbar flex-wrap gap-2">
-                  <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={isUploading}>
-                    🖇️ 上传并插入媒体
-                  </button>
-                  <button type="button" onClick={() => coverInputRef.current?.click()} disabled={isUploading}>
-                    🖼️ 选择封面
-                  </button>
-                  {isUploading && <span className="text-xs text-[var(--text-muted)]">上传中...</span>}
-                </div>
-                <input
-                  ref={attachmentInputRef}
-                  type="file"
-                  hidden
-                  multiple
-                  onChange={(e) => handleFileUpload(e.target.files, 'attachments')}
-                />
-                <input ref={coverInputRef} type="file" hidden onChange={(e) => handleFileUpload(e.target.files, 'cover')} />
-                {form.cover && (
-                  <div className="cover-preview">
-                    <p className="text-xs text-[var(--text-muted)] mb-2">封面预览</p>
-                    <img src={resolveAssetUrl(form.cover)} alt="封面" className="max-h-48 rounded-lg object-cover" />
-                  </div>
-                )}
-                <div className="flex items-center gap-3 flex-wrap">
-                  <button className="action-button" type="submit" disabled={isSubmitting}>
-                    {isSubmitting ? '写入中...' : editingId ? '更新日记' : '写入 Markdown 文件'}
-                  </button>
-                  <button
-                    className="badge"
-                    type="button"
-                    onClick={() => {
-                      setFormOpen(false)
-                      if (!editingId) setForm(createDefaultForm())
-                    }}
-                  >
+                <div className="flex flex-wrap gap-2 items-center">
+                  {editingId && <span className="badge text-xs">ID: {editingId}</span>}
+                  <button className="badge" type="button" onClick={handleCloseForm}>
                     关闭
                   </button>
                   {editingId && (
@@ -419,19 +366,92 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
                         setForm(createDefaultForm())
                       }}
                     >
-                      取消编辑
+                      切换为新建
                     </button>
                   )}
-                  {editingId && <span className="text-xs text-[var(--text-muted)]">当前编辑：{editingId}</span>}
                 </div>
-                {error && <p className="text-sm text-red-400">{error}</p>}
-              </form>
-              <div className="section-card h-full overflow-y-auto">
-                <p className="text-sm text-[var(--text-muted)] mb-2">实时预览（统一大小的图片/视频）</p>
-                <div className="markdown-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={previewComponents}>
-                    {form.content || '（输入正文以查看预览）'}
-                  </ReactMarkdown>
+              </div>
+              <div className="workspace-body">
+                <form className="workspace-panel workspace-panel--form grid gap-4" onSubmit={handleSubmit}>
+                  <div className="grid lg:grid-cols-2 gap-3">
+                    <input name="title" placeholder="标题" value={form.title} onChange={handleChange} required />
+                    <input name="tags" placeholder="标签（用逗号分隔）" value={form.tags} onChange={handleChange} />
+                  </div>
+                  <div className="grid lg:grid-cols-2 gap-3">
+                    <input
+                      name="occurredAt"
+                      type="datetime-local"
+                      placeholder="发生时间"
+                      value={form.occurredAt}
+                      onChange={handleChange}
+                    />
+                    <select name="parentId" value={form.parentId} onChange={handleChange}>
+                      <option value="">无母日记（独立记录）</option>
+                      {sortedRoots.map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.title} · {new Date(entry.occurredAt).toLocaleDateString()}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <textarea
+                    ref={editorRef}
+                    name="content"
+                    placeholder="Markdown 正文（支持 # 标题、- 列表、``` 代码等）"
+                    value={form.content}
+                    onChange={handleChange}
+                    rows={16}
+                    className="markdown-editor"
+                  />
+                  <div className="editor-toolbar">
+                    <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={isUploading}>
+                      🖇️ 上传并插入媒体
+                    </button>
+                    <button type="button" onClick={() => coverInputRef.current?.click()} disabled={isUploading}>
+                      🖼️ 选择封面
+                    </button>
+                    {isUploading && <span className="text-xs text-[var(--text-muted)]">上传中...</span>}
+                  </div>
+                  <input
+                    ref={attachmentInputRef}
+                    type="file"
+                    hidden
+                    multiple
+                    onChange={(e) => handleFileUpload(e.target.files, 'attachments')}
+                  />
+                  <input ref={coverInputRef} type="file" hidden onChange={(e) => handleFileUpload(e.target.files, 'cover')} />
+                  {form.cover && (
+                    <div className="cover-preview">
+                      <p className="text-xs text-[var(--text-muted)] mb-2">封面预览</p>
+                      <img src={resolveAssetUrl(form.cover)} alt="封面" className="max-h-48 rounded-lg object-cover" />
+                    </div>
+                  )}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <button className="action-button" type="submit" disabled={isSubmitting}>
+                      {isSubmitting ? '写入中...' : editingId ? '更新日记' : '写入 Markdown 文件'}
+                    </button>
+                    {editingId && (
+                      <button
+                        className="badge"
+                        type="button"
+                        onClick={() => {
+                          setEditingId(null)
+                          setForm(createDefaultForm())
+                        }}
+                      >
+                        取消编辑
+                      </button>
+                    )}
+                  </div>
+                  {error && <p className="text-sm text-red-400">{error}</p>}
+                </form>
+                <div className="workspace-panel workspace-panel--preview">
+                  <p className="text-sm text-[var(--text-muted)] mb-2">实时预览（左侧编辑 Markdown，右侧同步渲染）</p>
+                  <div className="markdown-body">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={previewComponents}>
+                      {form.content || '（输入正文以查看预览）'}
+                    </ReactMarkdown>
+                  </div>
                 </div>
               </div>
             </div>
@@ -468,9 +488,9 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
                   </button>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2 text-sm text-[var(--text-muted)]">
+              <div className="tag-inline-group text-sm text-[var(--text-muted)]">
                 {(childrenMap.get(entry.id) ?? []).map((child) => (
-                  <span key={child.id} className="badge">
+                  <span key={child.id} className="tag-inline">
                     {child.title}
                   </span>
                 ))}
@@ -580,5 +600,6 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
         </div>
       )}
     </div>
+  </div>
   )
 }

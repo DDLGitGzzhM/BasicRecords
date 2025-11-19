@@ -34,16 +34,15 @@ export function EventCard({ entry, onSelect }: Props) {
       role="button"
       tabIndex={0}
     >
-      <div className="flex items-center justify-between mb-1 text-sm text-[var(--text-muted)]">
+      <div className="flex items-center justify-start mb-1 text-sm text-[var(--text-muted)]">
         <span>{format(new Date(entry.occurredAt), 'MM月dd日 HH:mm')}</span>
-        <span>{entry.mood}</span>
       </div>
       <h3 className="text-xl font-semibold">{entry.title}</h3>
       <p className="text-[var(--text-muted)] text-sm mt-1 leading-relaxed">{excerpt}...</p>
       {entry.tags.length > 0 && (
-        <div className="flex flex-wrap gap-2 text-xs mt-3 text-[var(--text-muted)]">
+        <div className="tag-inline-group mt-3">
           {entry.tags.map((tag) => (
-            <span key={tag} className="badge">
+            <span key={tag} className="tag-inline">
               #{tag}
             </span>
           ))}

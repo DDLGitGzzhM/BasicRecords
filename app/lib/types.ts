@@ -3,7 +3,7 @@ export type ThemeMode = 'dark' | 'light'
 export type DiaryEntry = {
   id: string
   title: string
-  mood: string
+  mood?: string | null
   tags: string[]
   occurredAt: string
   parentId: string | null
@@ -15,7 +15,7 @@ export type DiaryEntry = {
 export type DiaryInput = {
   id?: string
   title: string
-  mood: string
+  mood?: string | null
   tags?: string[]
   attachments?: string[]
   occurredAt?: string

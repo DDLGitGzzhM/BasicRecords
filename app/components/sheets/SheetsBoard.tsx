@@ -435,7 +435,7 @@ export function SheetsBoard({ initialSheets, diaries }: { initialSheets: SheetDe
                       <div>
                         <h4 className="text-lg font-semibold">{entry.title}</h4>
                         <p className="text-sm text-[var(--text-muted)]">
-                          {entry.mood} · {entry.tags.join(', ')}
+                          {entry.tags.length > 0 ? entry.tags.join(', ') : '未打标签'}
                         </p>
                       </div>
                       <button className="badge" type="button" onClick={() => setActiveDiary(entry)}>
@@ -506,81 +506,141 @@ function RowModal({
   editingRowId: string | null
   error: string | null
 }) {
+  const diaryMap = useMemo(() => Object.fromEntries(diaries.map((entry) => [entry.id, entry])), [diaries])
+  const linkedEntries = refsList.map((id) => diaryMap[id]).filter((entry): entry is DiaryEntry => Boolean(entry))
+  const csvLine = [
+    form.date || 'YYYY-MM-DD',
+    form.open || '0',
+    form.high || '0',
+    form.low || '0',
+    form.close || '0',
+    `"${(form.note || '').replace(/"/g, '""')}"`
+  ].join(',')
   if (!open) return null
   return (
-    <div className="diary-modal-backdrop" onClick={onClose}>
-      <div className="diary-modal max-w-4xl" onClick={(e) => e.stopPropagation()}>
-        <form className="grid gap-3" onSubmit={onSubmit}>
-          <div className="grid md:grid-cols-2 gap-3">
-            <input type="date" name="date" value={form.date} onChange={onChange} required />
-            <div className="flex gap-2">
-              <input
-                name="diaryRefs"
-                placeholder="直接编辑 / 粘贴多个 ID，用逗号隔开"
-                value={form.diaryRefs}
-                onChange={onChange}
-                className="flex-1"
-                list="diary-options"
-              />
-            </div>
-          </div>
-          <datalist id="diary-options">
-            {diaries.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.title}
-              </option>
-            ))}
-          </datalist>
-          <div className="grid md:grid-cols-2 gap-3 items-start">
-            <div className="flex gap-2">
-              <input
-                placeholder="选择或输入日记 ID"
-                value={refInput}
-                onChange={(e) => setRefInput(e.target.value)}
-                list="diary-options"
-                className="flex-1"
-              />
-              <button className="badge" type="button" onClick={() => addRef(refInput.trim())} disabled={!refInput.trim()}>
-                添加关联
-              </button>
+    <div className="diary-modal-backdrop is-fullscreen" onClick={onClose}>
+      <div className="diary-modal table-editor-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="workspace-shell">
+          <div className="workspace-header">
+            <div className="workspace-heading">
+              <p className="text-xs uppercase tracking-[0.3em] text-[var(--text-muted)]">CSV Workbench</p>
+              <h3 className="text-2xl font-semibold">{editingRowId ? '更新表格行' : '新建表格行'}</h3>
             </div>
             <div className="flex flex-wrap gap-2">
-              {refsList.length === 0 && <span className="text-xs text-[var(--text-muted)]">暂无关联日记</span>}
-              {refsList.map((id) => (
-                <span key={id} className="badge text-xs">
-                  {id}
-                  <button type="button" className="ml-1" onClick={() => removeRef(id)} aria-label="移除关联">
-                    ×
-                  </button>
-                </span>
-              ))}
+              {editingRowId && <span className="badge text-xs">ID: {editingRowId}</span>}
+              <button className="badge" type="button" onClick={onClose}>
+                关闭
+              </button>
             </div>
           </div>
-          <div className="grid md:grid-cols-4 gap-3">
-            {numberFields.map((field) => (
-              <input
-                key={field.key}
-                name={field.key}
-                type="number"
-                step="0.1"
-                value={(form as Record<string, string>)[field.key]}
-                onChange={onChange}
-                placeholder={field.label}
-                required
-              />
-            ))}
+          <div className="workspace-body">
+            <form className="workspace-panel workspace-panel--form grid gap-4" onSubmit={onSubmit}>
+              <div className="grid lg:grid-cols-2 gap-3">
+                <input type="date" name="date" value={form.date} onChange={onChange} required />
+                <input
+                  name="diaryRefs"
+                  placeholder="直接编辑 / 粘贴多个 ID，用逗号隔开"
+                  value={form.diaryRefs}
+                  onChange={onChange}
+                  list="diary-options"
+                />
+              </div>
+              <datalist id="diary-options">
+                {diaries.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.title}
+                  </option>
+                ))}
+              </datalist>
+              <div className="grid lg:grid-cols-2 gap-3 items-start">
+                <div className="flex gap-2">
+                  <input
+                    placeholder="选择或输入日记 ID"
+                    value={refInput}
+                    onChange={(e) => setRefInput(e.target.value)}
+                    list="diary-options"
+                    className="flex-1"
+                  />
+                  <button className="badge" type="button" onClick={() => addRef(refInput.trim())} disabled={!refInput.trim()}>
+                    添加关联
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {refsList.length === 0 && <span className="text-xs text-[var(--text-muted)]">暂无关联日记</span>}
+                  {refsList.map((id) => (
+                    <span key={id} className="badge text-xs">
+                      {id}
+                      <button type="button" className="ml-1" onClick={() => removeRef(id)} aria-label="移除关联">
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div className="grid lg:grid-cols-4 gap-3">
+                {numberFields.map((field) => (
+                  <input
+                    key={field.key}
+                    name={field.key}
+                    type="number"
+                    step="0.1"
+                    value={(form as Record<string, string>)[field.key]}
+                    onChange={onChange}
+                    placeholder={field.label}
+                    required
+                  />
+                ))}
+              </div>
+              <textarea name="note" placeholder="备注" value={form.note} onChange={onChange} rows={4} />
+              <div className="flex items-center gap-3 flex-wrap">
+                <button className="action-button" type="submit">
+                  {editingRowId ? '更新行' : '+ 写入 CSV 行'}
+                </button>
+              </div>
+              {error && <p className="text-sm text-red-400">{error}</p>}
+            </form>
+            <div className="workspace-panel workspace-panel--preview">
+              <h4 className="text-lg font-semibold mb-4">实时预览</h4>
+              <div className="space-y-4 text-sm">
+                <div>
+                  <p className="text-xs text-[var(--text-muted)] uppercase tracking-[0.2em]">日期</p>
+                  <p className="text-2xl font-semibold mt-1">{form.date || 'YYYY-MM-DD'}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {numberFields.map((field) => (
+                    <div key={field.key} className="preview-metric">
+                      <p className="text-xs text-[var(--text-muted)]">{field.label}</p>
+                      <p className="text-xl font-semibold">{(form as Record<string, string>)[field.key] || '-'}</p>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <p className="text-xs text-[var(--text-muted)] uppercase tracking-[0.2em] mb-1">备注</p>
+                  <div className="preview-note">{form.note || '（暂无备注）'}</div>
+                </div>
+                <div>
+                  <p className="text-xs text-[var(--text-muted)] uppercase tracking-[0.2em] mb-1">关联日记</p>
+                  {linkedEntries.length === 0 ? (
+                    <p className="text-[var(--text-muted)]">未关联日记</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {linkedEntries.map((entry) => (
+                        <li key={entry.id}>
+                          <span className="text-[var(--accent)]">{entry.title}</span>
+                          <span className="text-[var(--text-muted)] text-xs ml-2">{entry.id}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs text-[var(--text-muted)] uppercase tracking-[0.2em] mb-1">CSV 片段</p>
+                  <pre className="code-block">{csvLine}</pre>
+                </div>
+              </div>
+            </div>
           </div>
-          <textarea name="note" placeholder="备注" value={form.note} onChange={onChange} rows={2} />
-          <div className="flex items-center gap-3">
-            <button className="action-button" type="submit">
-              {editingRowId ? '更新行' : '+ 写入 CSV 行'}
-            </button>
-            <button className="badge" type="button" onClick={onClose}>
-              关闭
-            </button>
-          </div>
-          {error && <p className="text-sm text-red-400">{error}</p>}
-        </form>
+        </div>
       </div>
     </div>
   )

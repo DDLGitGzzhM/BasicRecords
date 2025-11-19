@@ -267,7 +267,33 @@ function parseDateFromPath(contentDir: string, filePath: string) {
   return { year: year ?? '1970', month, day }
 }
 
-async function readDiaryFile(file: DiaryFileInfo, contentDir: string) {
+const MARKDOWN_LINK_REGEX = /(!?\[[^\]]*]\()(\.{1,2}\/[^)]+)(\))/g
+const HTML_SRC_REGEX = /(<(?:img|video|audio|source)[^>]*\ssrc=["'])(\.{1,2}\/[^"']+)(["'])/gi
+const HTML_HREF_REGEX = /(<a[^>]*\shref=["'])(\.{1,2}\/[^"']+)(["'])/gi
+const PATH_BOUNDARY = '[^A-Za-z0-9_/.-]'
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+function rewriteInlineAssetPaths(content: string, fileDir: string, rootDir: string) {
+  if (!/[.]{1,2}\//.test(content)) return content
+  const resolveRelative = (rel: string) => {
+    if (!rel.startsWith('./') && !rel.startsWith('../')) return rel
+    try {
+      const absolute = path.resolve(fileDir, rel)
+      const normalized = path.relative(rootDir, absolute)
+      if (!normalized || normalized.startsWith('..')) {
+        return rel
+      }
+      return normalized.split(path.sep).join('/')
+    } catch {
+      return rel
+    }
+  }
+  const replacer = (_match: string, prefix: string, rel: string, suffix: string) => `${prefix}${resolveRelative(rel)}${suffix}`
+  return content.replace(MARKDOWN_LINK_REGEX, replacer).replace(HTML_SRC_REGEX, replacer).replace(HTML_HREF_REGEX, replacer)
+}
+
+async function readDiaryFile(file: DiaryFileInfo, contentDir: string, rootDir: string) {
   const raw = await fs.readFile(file.filePath, 'utf8')
   const parsed = matter(raw)
   const { year, month, day } = parseDateFromPath(contentDir, file.filePath)
@@ -279,30 +305,36 @@ async function readDiaryFile(file: DiaryFileInfo, contentDir: string) {
     typeof parsed.data.parentId === 'string' && parsed.data.parentId.trim().length > 0 ? parsed.data.parentId : null
   const cover =
     typeof parsed.data.cover === 'string' && parsed.data.cover.trim().length > 0 ? parsed.data.cover : undefined
+  const fileDir = path.dirname(file.filePath)
+  const normalizedContent = rewriteInlineAssetPaths(parsed.content.trim() || '（空）', fileDir, rootDir)
+  const moodValue =
+    typeof parsed.data.mood === 'string' && parsed.data.mood.trim().length > 0 ? parsed.data.mood.trim() : null
   const entry: DiaryEntry = {
     id,
     title: (parsed.data.title as string) ?? path.basename(file.filePath, '.md'),
-    mood: (parsed.data.mood as string) ?? 'Neutral',
     tags: (parsed.data.tags as string[]) ?? [],
     attachments: ((parsed.data.attachments as string[]) ?? []).filter(Boolean),
     occurredAt,
     parentId,
     cover,
-    content: parsed.content.trim() || '（空）'
+    content: normalizedContent
+  }
+  if (moodValue) {
+    entry.mood = moodValue
   }
   return entry
 }
 
 async function findDiaryFileById(id: string) {
   await migrateLegacyData()
-  const { contentDir } = await getPaths()
+  const { contentDir, root } = await getPaths()
   const candidates = await collectDiaryFiles()
   for (const file of candidates) {
     const raw = await fs.readFile(file.filePath, 'utf8')
     const parsed = matter(raw)
     const fileId = (parsed.data.id as string) ?? ''
     if (fileId === id) {
-      const entry = await readDiaryFile(file, contentDir)
+      const entry = await readDiaryFile(file, contentDir, root)
       return { file, entry }
     }
   }
@@ -320,11 +352,11 @@ export async function readDiaryEntries(): Promise<DiaryEntry[]> {
   await ensureSheetMetaFile()
   await migrateLegacyData()
   await normalizeDiaryPlacement()
-  const { contentDir } = await getPaths()
+  const { contentDir, root } = await getPaths()
   const files = await collectDiaryFiles()
   const entries: DiaryEntry[] = []
   for (const file of files) {
-    entries.push(await readDiaryFile(file, contentDir))
+    entries.push(await readDiaryFile(file, contentDir, root))
   }
   return entries.sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
 }
@@ -376,11 +408,13 @@ export async function appendDiaryEntry(input: DiaryInput): Promise<DiaryEntry> {
   const frontmatter: Record<string, unknown> = {
     id,
     title: input.title,
-    mood: input.mood ?? 'Neutral',
     tags: input.tags ?? [],
     attachments: input.attachments ?? [],
     occurredAt,
     parentId: input.parentId ?? null
+  }
+  if (input.mood && input.mood.trim().length > 0) {
+    frontmatter.mood = input.mood.trim()
   }
   if (input.cover) {
     frontmatter.cover = input.cover
@@ -390,10 +424,9 @@ export async function appendDiaryEntry(input: DiaryInput): Promise<DiaryEntry> {
   const normalizedOccurredAt = Number.isNaN(new Date(occurredAt).getTime())
     ? new Date(`${year}-${month}-${day}`).toISOString()
     : occurredAt
-  return {
+  const nextEntry: DiaryEntry = {
     id,
     title: input.title,
-    mood: input.mood ?? 'Neutral',
     tags: input.tags ?? [],
     attachments: input.attachments ?? [],
     occurredAt: normalizedOccurredAt,
@@ -401,6 +434,10 @@ export async function appendDiaryEntry(input: DiaryInput): Promise<DiaryEntry> {
     parentId: input.parentId ?? null,
     content: input.content
   }
+  if (input.mood && input.mood.trim().length > 0) {
+    nextEntry.mood = input.mood.trim()
+  }
+  return nextEntry
 }
 
 export async function updateDiaryEntry(id: string, input: DiaryInput): Promise<DiaryEntry> {
@@ -418,7 +455,6 @@ export async function updateDiaryEntry(id: string, input: DiaryInput): Promise<D
   const nextEntry: DiaryEntry = {
     ...current,
     title: input.title ?? current.title,
-    mood: input.mood ?? current.mood,
     tags: input.tags ?? current.tags,
     attachments: input.attachments ?? current.attachments,
     occurredAt,
@@ -426,16 +462,26 @@ export async function updateDiaryEntry(id: string, input: DiaryInput): Promise<D
     parentId: typeof input.parentId === 'string' ? input.parentId : input.parentId === null ? null : current.parentId,
     content: input.content ?? current.content
   }
+  if (input.mood !== undefined) {
+    const trimmed = input.mood && input.mood.trim().length > 0 ? input.mood.trim() : null
+    if (trimmed) {
+      nextEntry.mood = trimmed
+    } else {
+      delete nextEntry.mood
+    }
+  }
   const target = await ensureDiaryPath(nextEntry.title, occurredAt, isChild, found.file.filePath)
 
   const frontmatter: Record<string, unknown> = {
     id,
     title: nextEntry.title,
-    mood: nextEntry.mood,
     tags: nextEntry.tags,
     attachments: nextEntry.attachments,
     occurredAt: nextEntry.occurredAt,
     parentId: nextEntry.parentId
+  }
+  if (nextEntry.mood) {
+    frontmatter.mood = nextEntry.mood
   }
   if (nextEntry.cover) {
     frontmatter.cover = nextEntry.cover
@@ -1064,8 +1110,16 @@ async function normalizeDiaryPlacement() {
       if (movedPath) {
         const relativePath = path.relative(path.dirname(file.filePath), movedPath).split(path.sep).join('/')
         const nextPath = relativePath.startsWith('.') ? relativePath : `./${relativePath}`
-        updatedContent = updatedContent.split(name).join(nextPath)
-        replaced = true
+        const namePattern = new RegExp(`(^|${PATH_BOUNDARY})${escapeRegExp(name)}(?=${PATH_BOUNDARY}|$)`, 'g')
+        let localChanged = false
+        updatedContent = updatedContent.replace(namePattern, (match, prefix) => {
+          localChanged = true
+          const normalizedPrefix = prefix === undefined ? '' : prefix
+          return `${normalizedPrefix}${nextPath}`
+        })
+        if (localChanged) {
+          replaced = true
+        }
       }
     }
     if (replaced) {

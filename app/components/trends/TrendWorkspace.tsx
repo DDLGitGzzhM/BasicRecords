@@ -134,7 +134,7 @@ export function TrendWorkspace({ sheets, diaries }: { sheets: SheetDefinition[];
                         <div>
                           <h4 className="text-lg font-semibold">{entry.title}</h4>
                           <p className="text-sm text-[var(--text-muted)]">
-                            {entry.mood} · {entry.tags.join(', ')}
+                            {entry.tags.length > 0 ? entry.tags.join(', ') : '未打标签'}
                           </p>
                         </div>
                         <button className="badge" type="button" onClick={() => setActiveDiary(entry)}>
