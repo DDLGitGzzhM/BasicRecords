@@ -40,7 +40,7 @@ export function TrendWorkspace({ sheets, diaries }: { sheets: SheetDefinition[];
         <div className="page-heading">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-[var(--text-muted)]">Trend Lab</p>
-            <h2 className="text-3xl font-semibold">K 线趋势实验室</h2>
+            <h2 className="text-3xl font-semibold">Life Trend</h2>
           </div>
           <div className="flex flex-col items-end gap-2 text-sm text-[var(--text-muted)]">
             <p>点击日级 K 线展开日记，周 / 月级聚合会跳转至对应视图。</p>

@@ -76,3 +76,15 @@ export type RelationsMap = {
   sheetRowsToDiaries: Record<string, string[]>
   diariesToSheets: Record<string, string[]>
 }
+
+export type DirectoryEntry = {
+  name: string
+  path: string
+  hasContentPackage: boolean
+}
+
+export type DirectoryListing = {
+  cwd: string
+  parent: string | null
+  entries: DirectoryEntry[]
+}

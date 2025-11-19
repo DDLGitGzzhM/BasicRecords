@@ -12,21 +12,6 @@ import type {
 } from '@/lib/types'
 import { readDataRoot } from '@/lib/server/config'
 
-const DEFAULT_SHEETS: SheetMeta[] = [
-  {
-    id: 'sheet-health',
-    key: 'health',
-    name: '健康体征',
-    description: '追踪睡眠 / 训练 / 气功，映射活力指数 K 线'
-  },
-  {
-    id: 'sheet-trade',
-    key: 'trade',
-    name: '交易胜率',
-    description: '记录现金流与胜率，关联复盘日记'
-  }
-]
-
 const CSV_HEADERS = ['id', 'date', 'open', 'high', 'low', 'close', 'note', 'diary_refs']
 
 type PathBundle = {
@@ -97,7 +82,7 @@ async function ensureSheetMetaFile() {
   await ensureBaseFiles()
   const { sheetMetaFile } = await getPaths()
   if (!(await pathExists(sheetMetaFile))) {
-    await fs.writeFile(sheetMetaFile, JSON.stringify(DEFAULT_SHEETS, null, 2), 'utf8')
+    await fs.writeFile(sheetMetaFile, JSON.stringify([], null, 2), 'utf8')
   }
 }
 
@@ -129,16 +114,12 @@ async function readSheetMetas(): Promise<SheetMeta[]> {
       : Array.isArray(parsed?.sheets)
         ? parsed.sheets
         : []
-    const metas = (metasRaw.length > 0 ? metasRaw : DEFAULT_SHEETS).map(normalizeSheetMeta)
+    const metas = metasRaw.map(normalizeSheetMeta)
     await ensureSheetFiles(metas)
-    if (metasRaw.length === 0) {
-      await writeSheetMetas(metas)
-    }
     return metas
   } catch {
-    const metas = DEFAULT_SHEETS.map(normalizeSheetMeta)
+    const metas: SheetMeta[] = []
     await writeSheetMetas(metas)
-    await ensureSheetFiles(metas)
     return metas
   }
 }

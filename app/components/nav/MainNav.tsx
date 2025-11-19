@@ -1,11 +1,9 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { usePathname } from 'next/navigation'
 import clsx from 'clsx'
 import { useThemeMode } from '@/components/providers/ThemeProvider'
-import { updateRootPath } from '@/lib/api'
 import type { Route } from 'next'
 
 const NAV_ITEMS: Array<{ href: Route; label: string }> = [
@@ -17,23 +15,8 @@ const NAV_ITEMS: Array<{ href: Route; label: string }> = [
 
 export default function MainNav() {
   const pathname = usePathname()
-  const router = useRouter()
   const { theme, toggleTheme, ready } = useThemeMode()
   const toggleLabel = ready ? (theme === 'dark' ? '切换白昼' : '切换黑夜') : '切换主题'
-  const [demoPending, setDemoPending] = useState(false)
-
-  const handleLoadDemo = async () => {
-    if (demoPending) return
-    try {
-      setDemoPending(true)
-      await updateRootPath('__DEFAULT__')
-      router.refresh()
-      window.location.reload()
-    } catch (err) {
-      console.error('[demo] unable to reset', err)
-      setDemoPending(false)
-    }
-  }
 
   return (
     <div className="stack-nav-inner">
@@ -50,9 +33,6 @@ export default function MainNav() {
       <div className="stack-nav-actions stack-nav-links--compact">
         <button className="stack-nav-link" onClick={toggleTheme} type="button">
           {toggleLabel}
-        </button>
-        <button className="stack-nav-link" onClick={handleLoadDemo} type="button" disabled={demoPending}>
-          {demoPending ? '加载中…' : '加载 Demo 数据'}
         </button>
       </div>
     </div>

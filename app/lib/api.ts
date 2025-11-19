@@ -1,4 +1,4 @@
-import type { DiaryEntry, DiaryInput, SheetDefinition, SheetRow, SheetRowInput } from '@/lib/types'
+import type { DiaryEntry, DiaryInput, DirectoryListing, SheetDefinition, SheetRow, SheetRowInput } from '@/lib/types'
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -101,6 +101,18 @@ export async function updateRootPath(path: string): Promise<string> {
   })
   const payload = await handleResponse<{ path: string }>(res)
   return payload.path
+}
+
+export async function pickRootPath(): Promise<string> {
+  const res = await fetch('/api/root/pick', { method: 'POST' })
+  const payload = await handleResponse<{ path: string }>(res)
+  return payload.path
+}
+
+export async function browseDirectories(path?: string): Promise<DirectoryListing> {
+  const qs = path ? `?path=${encodeURIComponent(path)}` : ''
+  const res = await fetch(`/api/root/browse${qs}`)
+  return handleResponse<DirectoryListing>(res)
 }
 
 export async function uploadAsset(file: File, occurredAt?: string): Promise<string> {

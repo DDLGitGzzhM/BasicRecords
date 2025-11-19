@@ -23,10 +23,10 @@
    # 或 ./scripts/dev.sh
    ```
    若需单独运行，可使用 `pnpm --filter @basicrecords/web dev` 与 `task backend:dev`。
-3. 浏览 `http://localhost:3000`，默认跳转 `/diary`。左侧竖向导航可在「日记 / 表格 / 趋势 / 设置」之间切换，并内置黑/白主题及 Demo 数据按钮；数据根目录默认指向 `content-demo`（可在设置页或 `task demo:reset` 恢复），自动加载 Hugo 风格的 Markdown 日记、`table/*.csv` 指标与 `relations` 关系包。
+3. 浏览 `http://localhost:3000`，默认跳转 `/diary`。左侧竖向导航可在「日记 / 表格 / 趋势 / 设置」之间切换，并内置黑/白主题；数据根目录默认指向 `content-demo`（可在设置页或 `task demo:reset` 恢复），自动加载 Hugo 风格的 Markdown 日记、`table/*.csv` 指标与 `relations` 关系包。
 
 ## 数据根目录结构
-- 根目录通过 `krecord.config.json`（或设置页内的“数据根目录”输入框）指定，默认值为 `./content-demo`。
+- 根目录通过 `krecord.config.json`（或设置页内的目录选择器）指定，默认值为 `./content-demo`。
 - 目录规范：
   ```
   <data-root>/
@@ -49,7 +49,7 @@
 - **Markdown 日记**：`package: dailyReport/*.md` 记录正文 + Frontmatter（标题、情绪、附件、发生时间、`parentId`）。前端提供富表单弹窗（Markdown 编辑区 + 图片/封面上传按钮）、母子日记树和附件预览，并支持列表/周/月三种视图（周/日历缩略仅展示母日记标题且可跳转详情）。
 - **CSV 表格**：`package: table/*.csv` + `relations.json` 构成多维表格，可在 `/sheets` 通过弹窗新增/删除/编辑行、关联日记 ID，系统自动反写 CSV 与关系文件，并实时生成 TradingView 风格的紧凑 K 线。
 - **趋势洞察**：`/trends` 支持多 Sheet 勾选，点击任意蜡烛即可展开当天关联的 Markdown 日记（含母子关系）。
-- **根目录管理**：导航栏内置“加载 Demo 数据”按钮可秒切回 `content-demo`，设置页也可输入绝对路径或恢复 Demo，所有页面在根目录切换后自动重新加载。
+- **根目录管理**：设置页支持通过系统文件选择器或目录浏览器切换任意根目录，也可以一键加载 Demo 数据；根路径变更后页面自动重新加载。
 - **附件服务**：上传的图片/视频/音频会落在 `assets/`，通过 `/api/uploads` 写入、本地 `/api/assets/*` 读取，避免手动输入路径。
 - **数据获取**：Next.js API 直接读写上述文件结构；Go Fiber LDS 仍保留事件示例 API 以便未来扩展。
 - **本地数据服务**：Fiber + CORS + Logger，中提供：

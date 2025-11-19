@@ -312,10 +312,8 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
     <div className="stack-layout">
       <aside className="stack-meta">
         <p className="stack-eyebrow">Daily Stack</p>
-        <h1 className="stack-title">Markdown 日记</h1>
-        <p className="stack-description">
-          数据自动加载 <code>dailyReport / table / relations.json</code>，支持母子结构、内嵌媒体与 CSV 关联。
-        </p>
+        <h1 className="stack-title">Life Notes</h1>
+        <p className="stack-description">让我们记录传奇的一生。</p>
         <div className="stack-stats">
           <span>共 {totalEntries} 条记录</span>
           <span>母日记 {rootEntries.length}</span>

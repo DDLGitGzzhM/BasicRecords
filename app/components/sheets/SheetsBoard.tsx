@@ -243,12 +243,9 @@ export function SheetsBoard({ initialSheets, diaries }: { initialSheets: SheetDe
         <div className="page-heading">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-[var(--text-muted)]">CSV Sheets</p>
-            <h2 className="text-3xl font-semibold">本地 CSV 表格</h2>
+            <h2 className="text-3xl font-semibold">Life Records</h2>
           </div>
-          <p className="text-sm text-[var(--text-muted)]">
-          数据落在 `package: table/*.csv`，关系写入 `relations.json`，可通过设置页切换根目录。
-        </p>
-      </div>
+        </div>
       <div className="mb-4">
         <button className="badge" type="button" onClick={() => setSheetModalOpen(true)}>
           + 创建新表格
