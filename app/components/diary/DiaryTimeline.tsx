@@ -75,14 +75,30 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
   const [layout, setLayout] = useState<'list' | 'week' | 'month'>('list')
   const [referenceDate, setReferenceDate] = useState<Date>(() => new Date())
   const [page, setPage] = useState(0)
+  const [filterTag, setFilterTag] = useState<string | null>(null)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
   const coverInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<HTMLTextAreaElement>(null)
 
-  const entriesById = useMemo(() => Object.fromEntries(items.map((entry) => [entry.id, entry])), [items])
+  const tagCounts = useMemo(() => {
+    const map = new Map<string, number>()
+    items.forEach((entry) => {
+      entry.tags.forEach((tag) => {
+        map.set(tag, (map.get(tag) ?? 0) + 1)
+      })
+    })
+    return map
+  }, [items])
+
+  const viewItems = useMemo(() => {
+    if (!filterTag) return items
+    return items.filter((entry) => entry.tags.includes(filterTag))
+  }, [filterTag, items])
+
+  const entriesById = useMemo(() => Object.fromEntries(viewItems.map((entry) => [entry.id, entry])), [viewItems])
   const childrenMap = useMemo(() => {
     const map = new Map<string, DiaryEntry[]>()
-    items.forEach((entry) => {
+    viewItems.forEach((entry) => {
       if (entry.parentId && entriesById[entry.parentId]) {
         const bucket = map.get(entry.parentId) ?? []
         bucket.push(entry)
@@ -91,11 +107,11 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
     })
     map.forEach((bucket) => bucket.sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()))
     return map
-  }, [entriesById, items])
+  }, [entriesById, viewItems])
 
   const rootEntries = useMemo(
-    () => items.filter((entry) => !entry.parentId || !entriesById[entry.parentId]),
-    [entriesById, items]
+    () => viewItems.filter((entry) => !entry.parentId || !entriesById[entry.parentId]),
+    [entriesById, viewItems]
   )
   const sortedRoots = useMemo(
     () => [...rootEntries].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()),
@@ -230,7 +246,7 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
         tags: form.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
         attachments: form.attachments,
         occurredAt,
-        cover: form.cover || undefined,
+        cover: form.cover === '' ? '' : form.cover,
         parentId: form.parentId || null,
         content: form.content || '（空）'
       }
@@ -337,267 +353,332 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
             ))}
           </div>
         </div>
-
-        {formOpen && (
-        <div className="diary-modal-backdrop is-fullscreen" onClick={handleCloseForm}>
-          <div className="diary-modal diary-editor-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="workspace-shell">
-              <div className="workspace-header">
-                <div className="workspace-heading">
-                  <p className="text-xs uppercase tracking-[0.3em] text-[var(--text-muted)]">Markdown Workbench</p>
-                  <h3 className="text-2xl font-semibold">
-                    {editingId ? '更新日记' : '新建日记'}
-                    {form.title ? ` · ${form.title}` : ''}
-                  </h3>
-                </div>
-                <div className="flex flex-wrap gap-2 items-center">
-                  {editingId && <span className="badge text-xs">ID: {editingId}</span>}
-                  <button className="badge" type="button" onClick={handleCloseForm}>
-                    关闭
-                  </button>
-                  {editingId && (
-                    <button
-                      className="badge"
-                      type="button"
-                      onClick={() => {
-                        setEditingId(null)
-                        setForm(createDefaultForm())
-                      }}
-                    >
-                      切换为新建
-                    </button>
-                  )}
-                </div>
+        <div className="relative lg:flex lg:items-start lg:gap-2">
+          <div className="space-y-3 lg:flex-1 lg:min-w-0">
+            {filterTag && (
+              <div className="flex items-center gap-2 text-sm">
+                <span className="badge">筛选标签：#{filterTag}</span>
+                <button className="badge" type="button" onClick={() => setFilterTag(null)}>
+                  清除筛选
+                </button>
               </div>
-              <div className="workspace-body">
-                <form className="workspace-panel workspace-panel--form grid gap-4" onSubmit={handleSubmit}>
-                  <div className="grid lg:grid-cols-2 gap-3">
-                    <input name="title" placeholder="标题" value={form.title} onChange={handleChange} required />
-                    <input name="tags" placeholder="标签（用逗号分隔）" value={form.tags} onChange={handleChange} />
-                  </div>
-                  <div className="grid lg:grid-cols-2 gap-3">
-                    <input
-                      name="occurredAt"
-                      type="datetime-local"
-                      placeholder="发生时间"
-                      value={form.occurredAt}
-                      onChange={handleChange}
-                    />
-                    <select name="parentId" value={form.parentId} onChange={handleChange}>
-                      <option value="">无母日记（独立记录）</option>
-                      {sortedRoots.map((entry) => (
-                        <option key={entry.id} value={entry.id}>
-                          {entry.title} · {new Date(entry.occurredAt).toLocaleDateString()}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <textarea
-                    ref={editorRef}
-                    name="content"
-                    placeholder="Markdown 正文（支持 # 标题、- 列表、``` 代码等）"
-                    value={form.content}
-                    onChange={handleChange}
-                    rows={16}
-                    className="markdown-editor"
-                  />
-                  <div className="editor-toolbar">
-                    <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={isUploading}>
-                      🖇️ 上传并插入媒体
-                    </button>
-                    <button type="button" onClick={() => coverInputRef.current?.click()} disabled={isUploading}>
-                      🖼️ 选择封面
-                    </button>
-                    {isUploading && <span className="text-xs text-[var(--text-muted)]">上传中...</span>}
-                  </div>
-                  <input
-                    ref={attachmentInputRef}
-                    type="file"
-                    hidden
-                    multiple
-                    onChange={(e) => handleFileUpload(e.target.files, 'attachments')}
-                  />
-                  <input ref={coverInputRef} type="file" hidden onChange={(e) => handleFileUpload(e.target.files, 'cover')} />
-                  {form.cover && (
-                    <div className="cover-preview">
-                      <p className="text-xs text-[var(--text-muted)] mb-2">封面预览</p>
-                      <img src={resolveAssetUrl(form.cover)} alt="封面" className="max-h-48 rounded-lg object-cover" />
+            )}
+            {formOpen && (
+              <div className="diary-modal-backdrop is-fullscreen" onClick={handleCloseForm}>
+                <div className="diary-modal diary-editor-modal" onClick={(e) => e.stopPropagation()}>
+                  <div className="workspace-shell">
+                    <div className="workspace-header">
+                      <div className="workspace-heading">
+                        <p className="text-xs uppercase tracking-[0.3em] text-[var(--text-muted)]">Markdown Workbench</p>
+                        <h3 className="text-2xl font-semibold">
+                          {editingId ? '更新日记' : '新建日记'}
+                          {form.title ? ` · ${form.title}` : ''}
+                        </h3>
+                      </div>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        {editingId && <span className="badge text-xs">ID: {editingId}</span>}
+                        <button className="badge" type="button" onClick={handleCloseForm}>
+                          关闭
+                        </button>
+                        {editingId && (
+                          <button
+                            className="badge"
+                            type="button"
+                            onClick={() => {
+                              setEditingId(null)
+                              setForm(createDefaultForm())
+                            }}
+                          >
+                            切换为新建
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  )}
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <button className="action-button" type="submit" disabled={isSubmitting}>
-                      {isSubmitting ? '写入中...' : editingId ? '更新日记' : '写入 Markdown 文件'}
-                    </button>
-                    {editingId && (
-                      <button
-                        className="badge"
-                        type="button"
-                        onClick={() => {
-                          setEditingId(null)
-                          setForm(createDefaultForm())
-                        }}
-                      >
-                        取消编辑
-                      </button>
-                    )}
-                  </div>
-                  {error && <p className="text-sm text-red-400">{error}</p>}
-                </form>
-                <div className="workspace-panel workspace-panel--preview">
-                  <p className="text-sm text-[var(--text-muted)] mb-2">实时预览（左侧编辑 Markdown，右侧同步渲染）</p>
-                  <div className="markdown-body">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={previewComponents}>
-                      {form.content || '（输入正文以查看预览）'}
-                    </ReactMarkdown>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {layout === 'list' && (
-        <div className="space-y-3">
-          {pagedRoots.map((entry) => (
-            <div key={entry.id} className="space-y-3">
-              <div className="flex flex-col gap-2">
-                <EventCard entry={entry} />
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    className="badge"
-                    type="button"
-                    onClick={() => setForm((prev) => ({ ...prev, parentId: entry.id }))}
-                  >
-                    以此为母日记创建子卡片
-                  </button>
-                  <button className="badge" type="button" onClick={() => startEdit(entry)}>
-                    编辑
-                  </button>
-                  <button className="badge" type="button" onClick={() => handleDeleteDiary(entry.id)}>
-                    删除
-                  </button>
-                  <button
-                    className="badge"
-                    type="button"
-                    onClick={() => setExpandedParentId((prev) => (prev === entry.id ? null : entry.id))}
-                  >
-                    {expandedParentId === entry.id ? '收起子日记' : `展开子日记 (${(childrenMap.get(entry.id) ?? []).length})`}
-                  </button>
-                </div>
-              </div>
-              <div className="tag-inline-group text-sm text-[var(--text-muted)]">
-                {(childrenMap.get(entry.id) ?? []).map((child) => (
-                  <span key={child.id} className="tag-inline">
-                    {child.title}
-                  </span>
-                ))}
-              </div>
-              {expandedParentId === entry.id &&
-                (childrenMap.get(entry.id) ?? []).map((child) => (
-                  <div key={child.id} className="diary-child">
-                    <div className="flex flex-col gap-2">
-                      <EventCard entry={child} />
-                      <div className="flex gap-2">
-                        <button className="badge" type="button" onClick={() => startEdit(child)}>
-                          编辑
-                        </button>
-                        <button className="badge" type="button" onClick={() => handleDeleteDiary(child.id)}>
-                          删除
-                        </button>
+                    <div className="workspace-body">
+                      <form className="workspace-panel workspace-panel--form grid gap-4" onSubmit={handleSubmit}>
+                        <div className="grid lg:grid-cols-2 gap-3">
+                          <input name="title" placeholder="标题" value={form.title} onChange={handleChange} required />
+                          <input name="tags" placeholder="标签（用逗号分隔）" value={form.tags} onChange={handleChange} />
+                        </div>
+                        <div className="grid lg:grid-cols-2 gap-3">
+                          <input
+                            name="occurredAt"
+                            type="datetime-local"
+                            placeholder="发生时间"
+                            value={form.occurredAt}
+                            onChange={handleChange}
+                          />
+                          <select name="parentId" value={form.parentId} onChange={handleChange}>
+                            <option value="">无母日记（独立记录）</option>
+                            {sortedRoots.map((entry) => (
+                              <option key={entry.id} value={entry.id}>
+                                {entry.title} · {new Date(entry.occurredAt).toLocaleDateString()}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <textarea
+                          ref={editorRef}
+                          name="content"
+                          placeholder="Markdown 正文（支持 # 标题、- 列表、``` 代码等）"
+                          value={form.content}
+                          onChange={handleChange}
+                          rows={16}
+                          className="markdown-editor"
+                        />
+                        <div className="editor-toolbar">
+                          <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={isUploading}>
+                            🖇️ 上传并插入媒体
+                          </button>
+                          <button type="button" onClick={() => coverInputRef.current?.click()} disabled={isUploading}>
+                            🖼️ 选择封面
+                          </button>
+                          {form.cover && (
+                            <button
+                              type="button"
+                              className="badge"
+                              onClick={() => {
+                                setForm((prev) => ({ ...prev, cover: '' }))
+                                if (coverInputRef.current) coverInputRef.current.value = ''
+                              }}
+                            >
+                              删除封面
+                            </button>
+                          )}
+                          {isUploading && <span className="text-xs text-[var(--text-muted)]">上传中...</span>}
+                        </div>
+                        <input
+                          ref={attachmentInputRef}
+                          type="file"
+                          hidden
+                          multiple
+                          onChange={(e) => handleFileUpload(e.target.files, 'attachments')}
+                        />
+                        <input ref={coverInputRef} type="file" hidden onChange={(e) => handleFileUpload(e.target.files, 'cover')} />
+                        {form.cover && (
+                          <div className="cover-preview">
+                            <p className="text-xs text-[var(--text-muted)] mb-2">封面预览</p>
+                            <div className="relative overflow-hidden rounded-xl h-48">
+                              <img
+                                src={resolveAssetUrl(form.cover)}
+                                alt="封面"
+                                className="h-full w-full object-cover"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-black/20 to-transparent" />
+                            </div>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <button className="action-button" type="submit" disabled={isSubmitting}>
+                            {isSubmitting ? '写入中...' : editingId ? '更新日记' : '写入 Markdown 文件'}
+                          </button>
+                          {editingId && (
+                            <button
+                              className="badge"
+                              type="button"
+                              onClick={() => {
+                                setEditingId(null)
+                                setForm(createDefaultForm())
+                              }}
+                            >
+                              取消编辑
+                            </button>
+                          )}
+                        </div>
+                        {error && <p className="text-sm text-red-400">{error}</p>}
+                      </form>
+                      <div className="workspace-panel workspace-panel--preview">
+                        <p className="text-sm text-[var(--text-muted)] mb-2">实时预览（左侧编辑 Markdown，右侧同步渲染）</p>
+                        <div className="markdown-body">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={previewComponents}>
+                            {form.content || '（输入正文以查看预览）'}
+                          </ReactMarkdown>
+                        </div>
                       </div>
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {layout === 'list' && (
+              <div className="space-y-3">
+                {pagedRoots.map((entry) => (
+                  <div key={entry.id} className="space-y-3">
+                <div className="flex flex-col gap-2">
+                  <EventCard entry={entry} />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className="badge"
+                      type="button"
+                      onClick={() => setForm((prev) => ({ ...prev, parentId: entry.id }))}
+                    >
+                          以此为母日记创建子卡片
+                        </button>
+                        <button className="badge" type="button" onClick={() => startEdit(entry)}>
+                          编辑
+                        </button>
+                        <button className="badge" type="button" onClick={() => handleDeleteDiary(entry.id)}>
+                          删除
+                        </button>
+                        <button
+                          className="badge"
+                          type="button"
+                      onClick={() => setExpandedParentId((prev) => (prev === entry.id ? null : entry.id))}
+                    >
+                      {expandedParentId === entry.id ? '收起子日记' : `展开子日记 (${(childrenMap.get(entry.id) ?? []).length})`}
+                    </button>
+                  </div>
+                </div>
+                {expandedParentId === entry.id &&
+                  (childrenMap.get(entry.id) ?? []).map((child) => (
+                    <div key={child.id} className="diary-child">
+                      <div className="flex flex-col gap-2">
+                        <EventCard entry={child} />
+                            <div className="flex gap-2">
+                              <button className="badge" type="button" onClick={() => startEdit(child)}>
+                                编辑
+                              </button>
+                              <button className="badge" type="button" onClick={() => handleDeleteDiary(child.id)}>
+                                删除
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
                 ))}
-            </div>
-          ))}
-          <div className="flex items-center justify-between pt-2">
-            <span className="text-sm text-[var(--text-muted)]">
-              第 {page + 1} 页 / 共 {Math.max(1, Math.ceil(sortedRoots.length / pageSize))} 页
-            </span>
-            <div className="flex gap-2">
-              <button className="badge" type="button" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}>
-                上一页
-              </button>
-              <button
-                className="badge"
-                type="button"
-                onClick={() => setPage((p) => (p + 1 < Math.ceil(sortedRoots.length / pageSize) ? p + 1 : p))}
-                disabled={page + 1 >= Math.ceil(sortedRoots.length / pageSize)}
-              >
-                下一页
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {layout === 'week' && (
-        <div className="section-card">
-          <div className="grid grid-cols-7 gap-3 text-sm">
-            {weekDates.map((dateObj) => {
-              const key = toDateKey(dateObj)
-              const entriesForDay = groupedMap[key] ?? []
-              return (
-                <div key={key} className="flex flex-col gap-2">
-                  <div className="font-semibold text-center">{format(dateObj, 'EEE')}</div>
-                  <div className="text-xs text-[var(--text-muted)] text-center">{format(dateObj, 'MM-dd')}</div>
-                  <ul className="space-y-1">
-                    {entriesForDay.map((entry) => (
-                      <li key={entry.id} className="pl-2 list-disc list-inside text-[var(--text-muted)]">
-                        <a href={`/diary/${entry.id}`} className="text-[var(--accent)]">
-                          {entry.title}
-                        </a>
-                      </li>
-                    ))}
-                    {entriesForDay.length === 0 && <li className="text-[var(--text-muted)] pl-2">无母日记</li>}
-                  </ul>
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-sm text-[var(--text-muted)]">
+                    第 {page + 1} 页 / 共 {Math.max(1, Math.ceil(sortedRoots.length / pageSize))} 页
+                  </span>
+                  <div className="flex gap-2">
+                    <button className="badge" type="button" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}>
+                      上一页
+                    </button>
+                    <button
+                      className="badge"
+                      type="button"
+                      onClick={() => setPage((p) => (p + 1) * pageSize < sortedRoots.length ? p + 1 : p)}
+                      disabled={(page + 1) * pageSize >= sortedRoots.length}
+                    >
+                      下一页
+                    </button>
+                  </div>
                 </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
+              </div>
+            )}
 
-      {layout === 'month' && (
-        <div className="section-card">
-          <div className="grid grid-cols-7 gap-2 text-sm font-semibold text-[var(--text-muted)] mb-2">
-            {['周一', '周二', '周三', '周四', '周五', '周六', '周日'].map((label) => (
-              <span key={label} className="text-center">
-                {label}
-              </span>
-            ))}
-          </div>
-          <div className="grid grid-cols-7 gap-2 text-sm">
-            {monthGrid.map((dateObj, idx) => {
-              const key = toDateKey(dateObj)
-              const entriesForDay = groupedMap[key] ?? []
-              const isCurrentMonth = dateObj.getMonth() === referenceDate.getMonth()
-              return (
-                <div
-                  key={`${key}-${idx}`}
-                  className={`p-2 border border-dashed border-[var(--border)] rounded-lg flex flex-col gap-1 ${
-                    isCurrentMonth ? '' : 'opacity-70'
-                  }`}
-                >
-                  <span className="font-semibold">{format(dateObj, 'd')}</span>
-                  <ul className="space-y-1">
-                    {entriesForDay.map((entry) => (
-                      <li key={entry.id} className="pl-2 list-disc list-inside text-[var(--text-muted)]">
-                        <a href={`/diary/${entry.id}`} className="text-[var(--accent)]">
+            {layout === 'week' && (
+              <div className="week-grid">
+                {weekDates.map((day) => {
+                  const dayKey = toDateKey(day)
+                  const dayEntries = groupedMap[dayKey] ?? []
+                  return (
+                    <div key={day.toISOString()} className="week-cell">
+                      <p className="week-date">{day.toLocaleDateString()}</p>
+                      {dayEntries.length === 0 ? (
+                        <p className="text-xs text-[var(--text-muted)]">无记录</p>
+                      ) : (
+                        <ul className="space-y-1">
+                          {dayEntries.map((entry) => (
+                            <li key={entry.id} className="text-sm">
+                              <button className="link" type="button" onClick={() => startEdit(entry)}>
+                                {entry.title}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {layout === 'month' && (
+              <div className="month-grid">
+                {monthGrid.map((day) => {
+                  const dayKey = toDateKey(day)
+                  const dayEntries = groupedMap[dayKey] ?? []
+                  return (
+                    <div key={day.toISOString()} className="month-cell">
+                      <p className="month-date">{day.getDate()}</p>
+                      {dayEntries.map((entry) => (
+                        <button key={entry.id} className="link block text-left" type="button" onClick={() => startEdit(entry)}>
                           {entry.title}
-                        </a>
-                      </li>
-                    ))}
-                    {entriesForDay.length === 0 && <li className="text-[var(--text-muted)] pl-2">无母日记</li>}
-                  </ul>
-                </div>
-              )
-            })}
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
+
+          <aside className="mt-4 space-y-3 lg:mt-0 lg:sticky lg:top-24 lg:w-36 lg:max-w-[9rem] lg:flex-shrink-0">
+            <div className="section-card">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-lg font-semibold">标签汇总</h3>
+                {filterTag && (
+                  <button className="badge badge--compact" type="button" onClick={() => setFilterTag(null)}>
+                    清除
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2 text-sm">
+                {Array.from(tagCounts.entries())
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([tag, count]) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      className={`badge badge--compact ${filterTag === tag ? 'is-active' : ''}`}
+                      onClick={() => {
+                        setFilterTag((prev) => (prev === tag ? null : tag))
+                        setPage(0)
+                      }}
+                    >
+                      #{tag} · {count}
+                    </button>
+                  ))}
+                {tagCounts.size === 0 && <p className="text-xs text-[var(--text-muted)]">暂无标签</p>}
+              </div>
+            </div>
+            <div className="section-card">
+              <h3 className="text-lg font-semibold mb-2">标签词云</h3>
+              <div className="flex flex-wrap gap-2">
+                {(() => {
+                  const entries = Array.from(tagCounts.entries())
+                  if (entries.length === 0) return <p className="text-xs text-[var(--text-muted)]">暂无标签</p>
+                  const max = Math.max(...entries.map(([, c]) => c))
+                  const min = Math.min(...entries.map(([, c]) => c))
+                  const spread = Math.max(1, max - min)
+                  return entries.map(([tag, count]) => {
+                    const weight = (count - min) / spread
+                    const size = 12 + weight * 14
+                    const opacity = 0.6 + weight * 0.4
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => {
+                          setFilterTag((prev) => (prev === tag ? null : tag))
+                          setPage(0)
+                        }}
+                        style={{ fontSize: `${size}px`, opacity }}
+                        className={`transition hover:-translate-y-0.5 ${filterTag === tag ? 'text-[var(--accent)]' : ''}`}
+                      >
+                        #{tag}
+                      </button>
+                    )
+                  })
+                })()}
+              </div>
+            </div>
+          </aside>
         </div>
-      )}
+      </div>
     </div>
-  </div>
   )
 }

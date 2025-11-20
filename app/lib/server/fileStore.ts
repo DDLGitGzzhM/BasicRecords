@@ -433,13 +433,14 @@ export async function updateDiaryEntry(id: string, input: DiaryInput): Promise<D
   const current = found.entry
   const occurredAt = input.occurredAt ?? current.occurredAt
   const isChild = typeof (input.parentId ?? current.parentId) === 'string'
+  const nextCover = input.cover === '' ? undefined : input.cover ?? current.cover
   const nextEntry: DiaryEntry = {
     ...current,
     title: input.title ?? current.title,
     tags: input.tags ?? current.tags,
     attachments: input.attachments ?? current.attachments,
     occurredAt,
-    cover: input.cover ?? current.cover,
+    cover: nextCover,
     parentId: typeof input.parentId === 'string' ? input.parentId : input.parentId === null ? null : current.parentId,
     content: input.content ?? current.content
   }

@@ -109,18 +109,30 @@ const markdownComponents = {
 export function DiaryModal({ entry, onClose, onEdit, onDelete, renderOnly }: Props) {
   if (!entry) return null
   const closeHandler = onClose ?? (() => {})
+  const coverUrl = entry.cover ? resolveAssetUrl(entry.cover) : null
 
   const content = (
     <>
-      {entry.cover && (
-        <div className="mb-4 flex justify-center">
-          <img src={resolveAssetUrl(entry.cover)} alt={entry.title} className="w-full max-w-3xl rounded-xl object-cover" />
+      {coverUrl && (
+        <div className="mb-4 overflow-hidden rounded-2xl shadow-lg">
+          <div className="relative h-56 w-full">
+            <img src={coverUrl} alt={entry.title} className="h-full w-full object-cover" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/30 to-transparent" />
+            <div className="absolute bottom-3 left-3 text-white drop-shadow">
+              <p className="text-xs opacity-80">{new Date(entry.occurredAt).toLocaleString()}</p>
+              <h3 className="text-2xl font-semibold">{entry.title}</h3>
+            </div>
+          </div>
         </div>
       )}
       <header className="flex items-center justify-between mb-4 gap-3">
         <div>
-          <p className="text-xs text-[var(--text-muted)]">{new Date(entry.occurredAt).toLocaleString()}</p>
-          <h3 className="text-2xl font-semibold">{entry.title}</h3>
+          {!coverUrl && (
+            <>
+              <p className="text-xs text-[var(--text-muted)]">{new Date(entry.occurredAt).toLocaleString()}</p>
+              <h3 className="text-2xl font-semibold">{entry.title}</h3>
+            </>
+          )}
         </div>
         {!renderOnly && (
           <div className="flex flex-wrap gap-2">

@@ -48,7 +48,7 @@ body {
 
 main {
   margin-top: 2rem;
-  max-width: 960px;
+  max-width: 1180px;
   width: 100%;
 }
 
@@ -203,6 +203,12 @@ main {
   text-transform: uppercase;
   color: var(--text-muted);
   background: transparent;
+}
+
+.badge--compact {
+  font-size: 0.7rem;
+  padding: 0.25rem 0.7rem;
+  letter-spacing: 0.08em;
 }
 
 .badge.is-active {
