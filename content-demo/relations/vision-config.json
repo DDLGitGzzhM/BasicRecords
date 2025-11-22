@@ -1,0 +1,44 @@
+{
+  "backgrounds": [
+    "vision/image/default-background-1.jpg",
+    "vision/image/default-background-2.jpg",
+    "vision/image/default-background-3.jpg"
+  ],
+  "currentBackgroundIndex": 2,
+  "bubblesByBackground": {
+    "vision/image/default-background-1.jpg": [
+      {
+        "id": "bubble-spirit",
+        "label": "品质精神",
+        "content": "保持专注，做当下最重要的事。",
+        "x": 0.27,
+        "y": 0.32,
+        "size": 86,
+        "color": "#c87a24",
+        "diaryIds": []
+      },
+      {
+        "id": "bubble-quality",
+        "label": "品质精神",
+        "content": "写完即改，保证交付含金量。",
+        "x": 0.58,
+        "y": 0.24,
+        "size": 92,
+        "color": "#3b82f6",
+        "diaryIds": []
+      },
+      {
+        "id": "bubble-persist",
+        "label": "坚持",
+        "content": "每天复盘 + 一点点前进。",
+        "x": 0.52,
+        "y": 0.62,
+        "size": 96,
+        "color": "#16a34a",
+        "diaryIds": []
+      }
+    ],
+    "vision/image/default-background-3.jpg": [],
+    "vision/image/default-background-2.jpg": []
+  }
+}

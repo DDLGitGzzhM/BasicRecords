@@ -21,6 +21,12 @@ type PathBundle = {
   relationsDir: string
   relationsFile: string
   sheetMetaFile: string
+  visionDir: string
+  visionImageDir: string
+  visionContentDir: string
+  visionFile: string
+  visionLinksFile: string
+  visionConfigFile: string
 }
 
 type DiaryFileInfo = { filePath: string; isChild: boolean }
@@ -36,7 +42,13 @@ async function getPaths(): Promise<PathBundle> {
   const relationsDir = path.join(root, 'relations')
   const relationsFile = path.join(relationsDir, 'relations.json')
   const sheetMetaFile = path.join(relationsDir, 'meta.json')
-  return { root, contentDir, tableDir, relationsDir, relationsFile, sheetMetaFile }
+  const visionDir = path.join(root, 'vision')
+  const visionImageDir = path.join(visionDir, 'image')
+  const visionContentDir = path.join(visionDir, 'content')
+  const visionFile = path.join(relationsDir, 'bubbles.json')
+  const visionLinksFile = path.join(relationsDir, 'vision-links.json')
+  const visionConfigFile = path.join(relationsDir, 'vision-config.json')
+  return { root, contentDir, tableDir, relationsDir, relationsFile, sheetMetaFile, visionDir, visionImageDir, visionContentDir, visionFile, visionLinksFile, visionConfigFile }
 }
 
 async function pathExists(target: string) {
@@ -1169,4 +1181,317 @@ async function cleanupEmptyDayDirectories() {
       await fs.rm(yearPath, { recursive: true, force: true }).catch(() => {})
     }
   }
+}
+
+// ---------- Vision Canvas Bubbles
+export type Bubble = {
+  id: string
+  label: string
+  content: string
+  diaryIds: string[]
+  x: number
+  y: number
+  color: string
+  size: number
+}
+
+export type VisionLinks = {
+  links: Array<{ bubbleId: string; diaryId: string }>
+  imageLinks?: Array<{ bubbleId: string; imageId: string }>
+  note?: string
+}
+
+async function migrateLegacyVisionData() {
+  const paths = await getPaths()
+  const legacyVisionDir = path.join(paths.contentDir, 'vision')
+  
+  if (await pathExists(legacyVisionDir)) {
+    try {
+      // 确保新的 vision 目录存在
+      await fs.mkdir(paths.visionDir, { recursive: true })
+      await fs.mkdir(paths.visionImageDir, { recursive: true })
+      await fs.mkdir(paths.visionContentDir, { recursive: true })
+      
+      // 迁移 content/vision/ 下的文件到 vision/content/
+      const files = await fs.readdir(legacyVisionDir)
+      let hasFiles = false
+      for (const file of files) {
+        const sourcePath = path.join(legacyVisionDir, file)
+        const targetPath = path.join(paths.visionContentDir, file)
+        const stats = await fs.stat(sourcePath).catch(() => null)
+        if (stats && stats.isFile()) {
+          hasFiles = true
+          // 如果目标文件不存在，则迁移
+          if (!(await pathExists(targetPath))) {
+            await fs.copyFile(sourcePath, targetPath).catch(() => {})
+          } else {
+            // 如果目标文件已存在，也复制（覆盖）
+            await fs.copyFile(sourcePath, targetPath).catch(() => {})
+          }
+        } else if (stats && stats.isDirectory()) {
+          // 如果是目录，递归复制
+          hasFiles = true
+          await fs.mkdir(targetPath, { recursive: true }).catch(() => {})
+          const subFiles = await fs.readdir(sourcePath).catch(() => [])
+          for (const subFile of subFiles) {
+            const subSource = path.join(sourcePath, subFile)
+            const subTarget = path.join(targetPath, subFile)
+            const subStats = await fs.stat(subSource).catch(() => null)
+            if (subStats && subStats.isFile()) {
+              await fs.copyFile(subSource, subTarget).catch(() => {})
+            }
+          }
+        }
+      }
+      
+      // 迁移完成后，删除 content/vision/ 目录
+      if (hasFiles) {
+        await fs.rm(legacyVisionDir, { recursive: true, force: true }).catch(() => {})
+      }
+    } catch (err) {
+      console.error('迁移 vision 数据失败:', err)
+    }
+  }
+}
+
+async function ensureVisionFiles() {
+  const { visionDir, visionImageDir, visionContentDir, visionFile, visionLinksFile, visionConfigFile, relationsDir } = await getPaths()
+  await migrateLegacyVisionData()
+  await fs.mkdir(visionDir, { recursive: true })
+  await fs.mkdir(visionImageDir, { recursive: true })
+  await fs.mkdir(visionContentDir, { recursive: true })
+  await fs.mkdir(relationsDir, { recursive: true })
+  
+  // 迁移旧的 bubbles.json（如果存在）
+  const oldVisionFile = path.join(visionContentDir, 'bubbles.json')
+  if (await pathExists(oldVisionFile)) {
+    try {
+      // 如果新位置没有文件，迁移数据
+      if (!(await pathExists(visionFile))) {
+        const oldData = await fs.readFile(oldVisionFile, 'utf8')
+        await fs.writeFile(visionFile, oldData, 'utf8')
+      }
+      // 删除旧文件（无论是否迁移，都要删除旧位置的文件）
+      await fs.rm(oldVisionFile, { force: true })
+    } catch (err) {
+      console.error('迁移 bubbles.json 失败:', err)
+    }
+  }
+  
+  if (!(await pathExists(visionFile))) {
+    await fs.writeFile(visionFile, JSON.stringify([], null, 2), 'utf8')
+  }
+  if (!(await pathExists(visionLinksFile))) {
+    await fs.writeFile(visionLinksFile, JSON.stringify({ links: [], imageLinks: [] }, null, 2), 'utf8')
+  }
+  if (!(await pathExists(visionConfigFile))) {
+    // 初始化demo数据：下载默认背景并创建配置
+    const defaultBgs = await downloadDefaultBackgrounds()
+    const defaultBubbles: Bubble[] = [
+      {
+        id: 'bubble-spirit',
+        label: '品质精神',
+        content: '保持专注，做当下最重要的事。',
+        x: 0.27,
+        y: 0.32,
+        size: 86,
+        color: '#c87a24',
+        diaryIds: []
+      },
+      {
+        id: 'bubble-quality',
+        label: '品质精神',
+        content: '写完即改，保证交付含金量。',
+        x: 0.58,
+        y: 0.24,
+        size: 92,
+        color: '#3b82f6',
+        diaryIds: []
+      },
+      {
+        id: 'bubble-persist',
+        label: '坚持',
+        content: '每天复盘 + 一点点前进。',
+        x: 0.52,
+        y: 0.62,
+        size: 96,
+        color: '#16a34a',
+        diaryIds: []
+      }
+    ]
+    
+    const bubblesByBackground: Record<string, Bubble[]> = {}
+    if (defaultBgs.length > 0) {
+      // 第一个背景有小球，其他背景为空
+      bubblesByBackground[defaultBgs[0]] = defaultBubbles
+      for (let i = 1; i < defaultBgs.length; i++) {
+        bubblesByBackground[defaultBgs[i]] = []
+      }
+    }
+    
+    const defaultConfig: VisionConfig = {
+      backgrounds: defaultBgs,
+      currentBackgroundIndex: 0,
+      bubblesByBackground
+    }
+    await fs.writeFile(visionConfigFile, JSON.stringify(defaultConfig, null, 2), 'utf8')
+  }
+}
+
+export async function readBubbles(): Promise<Bubble[]> {
+  await ensureVisionFiles()
+  const { visionFile } = await getPaths()
+  try {
+    const raw = await fs.readFile(visionFile, 'utf8')
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+export async function saveBubbles(bubbles: Bubble[]): Promise<void> {
+  await ensureVisionFiles()
+  const { visionFile } = await getPaths()
+  await fs.writeFile(visionFile, JSON.stringify(bubbles, null, 2), 'utf8')
+}
+
+export async function readVisionConfig(): Promise<VisionConfig> {
+  await ensureVisionFiles()
+  const { visionConfigFile } = await getPaths()
+  try {
+    const raw = await fs.readFile(visionConfigFile, 'utf8')
+    const parsed = JSON.parse(raw) as VisionConfig
+    return {
+      backgrounds: Array.isArray(parsed.backgrounds) ? parsed.backgrounds : [],
+      currentBackgroundIndex: typeof parsed.currentBackgroundIndex === 'number' ? parsed.currentBackgroundIndex : 0,
+      bubblesByBackground: typeof parsed.bubblesByBackground === 'object' && parsed.bubblesByBackground !== null ? parsed.bubblesByBackground : {}
+    }
+  } catch {
+    return {
+      backgrounds: [],
+      currentBackgroundIndex: 0,
+      bubblesByBackground: {}
+    }
+  }
+}
+
+export async function saveVisionConfig(config: VisionConfig): Promise<void> {
+  await ensureVisionFiles()
+  const { visionConfigFile } = await getPaths()
+  await fs.writeFile(visionConfigFile, JSON.stringify(config, null, 2), 'utf8')
+}
+
+export async function readVisionLinks(): Promise<VisionLinks> {
+  await ensureVisionFiles()
+  const { visionLinksFile } = await getPaths()
+  try {
+    const raw = await fs.readFile(visionLinksFile, 'utf8')
+    const parsed = JSON.parse(raw) as VisionLinks
+    return {
+      links: Array.isArray(parsed.links) ? parsed.links : [],
+      imageLinks: Array.isArray(parsed.imageLinks) ? parsed.imageLinks : [],
+      note: parsed.note
+    }
+  } catch {
+    return { links: [], imageLinks: [] }
+  }
+}
+
+export async function saveVisionLinks(links: VisionLinks): Promise<void> {
+  await ensureVisionFiles()
+  const { visionLinksFile } = await getPaths()
+  await fs.writeFile(visionLinksFile, JSON.stringify(links, null, 2), 'utf8')
+}
+
+async function downloadDefaultBackgrounds(): Promise<string[]> {
+  const { visionImageDir, root } = await getPaths()
+  const defaultImages = [
+    { url: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1500&q=80&sat=-20', filename: 'default-background-1.jpg' },
+    { url: 'https://images.unsplash.com/photo-1519681393784-dbf267915e0e?auto=format&fit=crop&w=1500&q=80&sat=-20', filename: 'default-background-2.jpg' },
+    { url: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?auto=format&fit=crop&w=1500&q=80&sat=-20', filename: 'default-background-3.jpg' }
+  ]
+  
+  const downloaded: string[] = []
+  
+  for (const img of defaultImages) {
+    const targetPath = path.join(visionImageDir, img.filename)
+    try {
+      // 如果图片已存在，直接使用
+      if (await pathExists(targetPath)) {
+        const relative = path.relative(root, targetPath).split(path.sep).join('/')
+        downloaded.push(relative)
+        continue
+      }
+      
+      // 下载图片
+      const response = await fetch(img.url)
+      if (!response.ok) {
+        console.error(`下载背景图片失败: ${img.filename}`, response.statusText)
+        continue
+      }
+      
+      const arrayBuffer = await response.arrayBuffer()
+      const buffer = Buffer.from(arrayBuffer)
+      await fs.writeFile(targetPath, buffer)
+      
+      const relative = path.relative(root, targetPath).split(path.sep).join('/')
+      downloaded.push(relative)
+    } catch (err) {
+      console.error(`下载背景图片失败: ${img.filename}`, err)
+    }
+  }
+  
+  return downloaded
+}
+
+async function downloadDefaultBackground(): Promise<string | null> {
+  const downloaded = await downloadDefaultBackgrounds()
+  return downloaded.length > 0 ? downloaded[0] : null
+}
+
+export async function readVisionBackgrounds(): Promise<string[]> {
+  await ensureVisionFiles()
+  const { visionImageDir, root } = await getPaths()
+  try {
+    const files = await fs.readdir(visionImageDir)
+    const imageFiles = files.filter(f => {
+      const ext = path.extname(f).toLowerCase()
+      return IMAGE_EXTS.has(ext)
+    })
+    
+    if (imageFiles.length > 0) {
+      // 返回所有图片的相对路径，按文件名排序
+      const sorted = imageFiles.sort()
+      return sorted.map(f => {
+        const absolute = path.join(visionImageDir, f)
+        return path.relative(root, absolute).split(path.sep).join('/')
+      })
+    }
+    
+    // 如果没有本地图片，下载多个默认图片用于demo
+    const defaultBgs = await downloadDefaultBackgrounds()
+    return defaultBgs
+  } catch (err) {
+    console.error('读取背景图片失败:', err)
+    // 如果读取失败，尝试下载默认图片
+    const defaultBgs = await downloadDefaultBackgrounds()
+    return defaultBgs
+  }
+}
+
+// 保持向后兼容
+export async function readVisionBackground(): Promise<string | null> {
+  const backgrounds = await readVisionBackgrounds()
+  return backgrounds.length > 0 ? backgrounds[0] : null
+}
+
+export async function saveVisionBackground(filename: string, buffer: Buffer): Promise<{ absolute: string; relative: string }> {
+  await ensureVisionFiles()
+  const { visionImageDir, root } = await getPaths()
+  const sanitized = filename.replace(/[^a-zA-Z0-9._-]/g, '-')
+  const target = path.join(visionImageDir, sanitized)
+  await fs.writeFile(target, buffer)
+  const relative = path.relative(root, target).split(path.sep).join('/')
+  return { absolute: target, relative }
 }

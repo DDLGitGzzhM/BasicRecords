@@ -139,3 +139,53 @@ export async function exportDataPackage(): Promise<{ blob: Blob; filename: strin
   const blob = await res.blob()
   return { blob, filename }
 }
+
+export type Bubble = {
+  id: string
+  label: string
+  content: string
+  diaryIds: string[]
+  x: number
+  y: number
+  color: string
+  size: number
+}
+
+export async function readBubbles(backgroundIndex?: number): Promise<{ bubbles: Bubble[]; backgrounds: string[]; currentBackgroundIndex: number }> {
+  const url = backgroundIndex !== undefined ? `/api/vision?index=${backgroundIndex}` : '/api/vision'
+  const res = await fetch(url)
+  return handleResponse<{ bubbles: Bubble[]; backgrounds: string[]; currentBackgroundIndex: number }>(res)
+}
+
+export async function readAllBubbles(): Promise<{ bubbles: Bubble[]; backgrounds: string[]; currentBackgroundIndex: number; allBubblesByBackground: Record<string, Bubble[]> }> {
+  const res = await fetch('/api/vision?all=true')
+  return handleResponse<{ bubbles: Bubble[]; backgrounds: string[]; currentBackgroundIndex: number; allBubblesByBackground: Record<string, Bubble[]> }>(res)
+}
+
+export async function saveBubbles(bubbles: Bubble[], currentBackgroundIndex: number, backgrounds: string[]): Promise<void> {
+  const res = await fetch('/api/vision', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bubbles, currentBackgroundIndex, backgrounds })
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || '保存失败')
+  }
+  await res.json()
+}
+
+export async function uploadVisionBackground(file: File): Promise<string> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch('/api/vision/background', {
+    method: 'POST',
+    body: form
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || '上传失败')
+  }
+  const payload = await handleResponse<{ path: string }>(res)
+  return payload.path
+}

@@ -10,13 +10,15 @@ const NAV_ITEMS: Array<{ href: Route; label: string }> = [
   { href: '/diary' as Route, label: '日记' },
   { href: '/sheets' as Route, label: '表格' },
   { href: '/trends' as Route, label: '趋势' },
+  { href: '/vision-canvas' as Route, label: '品质精神' },
   { href: '/settings' as Route, label: '设置' }
 ]
 
 export default function MainNav() {
   const pathname = usePathname()
-  const { theme, toggleTheme, ready } = useThemeMode()
-  const toggleLabel = ready ? (theme === 'dark' ? '切换白昼' : '切换黑夜') : '切换主题'
+  const { theme, toggleTheme } = useThemeMode()
+  // 直接使用 theme，不依赖 ready，避免 hydration mismatch
+  const toggleLabel = theme === 'dark' ? '切换白昼' : '切换黑夜'
 
   return (
     <div className="stack-nav-inner">
@@ -31,7 +33,7 @@ export default function MainNav() {
         })}
       </nav>
       <div className="stack-nav-actions stack-nav-links--compact">
-        <button className="stack-nav-link" onClick={toggleTheme} type="button">
+        <button className="stack-nav-link" onClick={toggleTheme} type="button" suppressHydrationWarning>
           {toggleLabel}
         </button>
       </div>

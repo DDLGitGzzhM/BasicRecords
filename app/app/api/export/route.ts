@@ -35,6 +35,24 @@ export async function GET() {
     })
 
     archive.pipe(stream)
+    
+    // 确保 vision 文件夹存在（即使为空也要包含）
+    const visionDir = path.join(root, 'vision')
+    const visionImageDir = path.join(visionDir, 'image')
+    const visionContentDir = path.join(visionDir, 'content')
+    const relationsDir = path.join(root, 'relations')
+    await fs.mkdir(visionImageDir, { recursive: true }).catch(() => {})
+    await fs.mkdir(visionContentDir, { recursive: true }).catch(() => {})
+    await fs.mkdir(relationsDir, { recursive: true }).catch(() => {})
+    
+    // 如果 relations/bubbles.json 不存在，创建一个空文件
+    const bubblesFile = path.join(relationsDir, 'bubbles.json')
+    try {
+      await fs.access(bubblesFile)
+    } catch {
+      await fs.writeFile(bubblesFile, JSON.stringify([], null, 2), 'utf8').catch(() => {})
+    }
+    
     archive.directory(root, folderName)
     archive.finalize()
 
