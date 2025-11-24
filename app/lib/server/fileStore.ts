@@ -10,7 +10,8 @@ import type {
   SheetRow,
   SheetRowInput,
   WeekBucket,
-  MonthBucket
+  MonthBucket,
+  ProfileConfig
 } from '@/lib/types'
 import { readDataRoot } from '@/lib/server/config'
 
@@ -24,6 +25,8 @@ type PathBundle = {
   relationsFile: string
   weekRelationsFile: string
   monthRelationsFile: string
+  profileFile: string
+  profilePinsFile: string
   sheetMetaFile: string
 }
 
@@ -60,6 +63,9 @@ export type VisionLinks = {
   note?: string
 }
 
+export type ProfilePins = {
+  pinnedDiaryIds: string[]
+}
 type VisionPaths = {
   root: string
   visionDir: string
@@ -76,8 +82,21 @@ async function getPaths(): Promise<PathBundle> {
   const relationsFile = path.join(relationsDir, 'relations.json')
   const weekRelationsFile = path.join(relationsDir, 'relations-week.json')
   const monthRelationsFile = path.join(relationsDir, 'relations-month.json')
+  const profileFile = path.join(relationsDir, 'profile.json')
+  const profilePinsFile = path.join(relationsDir, 'profile-pins.json')
   const sheetMetaFile = path.join(relationsDir, 'meta.json')
-  return { root, contentDir, tableDir, relationsDir, relationsFile, weekRelationsFile, monthRelationsFile, sheetMetaFile }
+  return {
+    root,
+    contentDir,
+    tableDir,
+    relationsDir,
+    relationsFile,
+    weekRelationsFile,
+    monthRelationsFile,
+    profileFile,
+    profilePinsFile,
+    sheetMetaFile
+  }
 }
 
 async function pathExists(target: string) {
@@ -90,7 +109,16 @@ async function pathExists(target: string) {
 }
 
 async function ensureBaseFiles() {
-  const { contentDir, tableDir, relationsDir, relationsFile, weekRelationsFile, monthRelationsFile } = await getPaths()
+  const {
+    contentDir,
+    tableDir,
+    relationsDir,
+    relationsFile,
+    weekRelationsFile,
+    monthRelationsFile,
+    profileFile,
+    profilePinsFile
+  } = await getPaths()
   await fs.mkdir(contentDir, { recursive: true })
   await fs.mkdir(tableDir, { recursive: true })
   await fs.mkdir(relationsDir, { recursive: true })
@@ -110,6 +138,12 @@ async function ensureBaseFiles() {
   }
   if (!(await pathExists(monthRelationsFile))) {
     await fs.writeFile(monthRelationsFile, JSON.stringify({}, null, 2), 'utf8')
+  }
+  if (!(await pathExists(profileFile))) {
+    await fs.writeFile(profileFile, JSON.stringify({ pinnedDiaryIds: [] }, null, 2), 'utf8')
+  }
+  if (!(await pathExists(profilePinsFile))) {
+    await fs.writeFile(profilePinsFile, JSON.stringify({ pinnedDiaryIds: [] }, null, 2), 'utf8')
   }
 }
 
@@ -612,6 +646,58 @@ export async function readDiaryAggregates(): Promise<Pick<RelationsMap, 'weekBuc
     weekBuckets: rel.weekBuckets ?? {},
     monthBuckets: rel.monthBuckets ?? {}
   }
+}
+
+export async function readActivityBuckets(): Promise<Pick<RelationsMap, 'weekBuckets' | 'monthBuckets'>> {
+  await ensureBaseFiles()
+  const { weekRelationsFile, monthRelationsFile } = await getPaths()
+  let weekBuckets: Record<string, WeekBucket> = {}
+  let monthBuckets: Record<string, MonthBucket> = {}
+  try {
+    weekBuckets = JSON.parse(await fs.readFile(weekRelationsFile, 'utf8'))
+  } catch {
+    weekBuckets = {}
+  }
+  try {
+    monthBuckets = JSON.parse(await fs.readFile(monthRelationsFile, 'utf8'))
+  } catch {
+    monthBuckets = {}
+  }
+  return { weekBuckets, monthBuckets }
+}
+
+export async function readProfileConfig(): Promise<ProfileConfig> {
+  await ensureBaseFiles()
+  const { profileFile } = await getPaths()
+  try {
+    const raw = await fs.readFile(profileFile, 'utf8')
+    const parsed = JSON.parse(raw) as Partial<ProfileConfig>
+    const normalized = Array.from(
+      new Set((parsed.pinnedDiaryIds ?? []).filter((id): id is string => typeof id === 'string' && id.trim().length > 0))
+    )
+    const config: ProfileConfig = { pinnedDiaryIds: normalized }
+    if (!parsed.pinnedDiaryIds || parsed.pinnedDiaryIds.length !== normalized.length) {
+      await fs.writeFile(profileFile, JSON.stringify(config, null, 2), 'utf8')
+    }
+    return config
+  } catch {
+    const fallback: ProfileConfig = { pinnedDiaryIds: [] }
+    await fs.writeFile(profileFile, JSON.stringify(fallback, null, 2), 'utf8')
+    return fallback
+  }
+}
+
+export async function updatePinnedDiaries(nextPinned: string[]): Promise<ProfileConfig> {
+  await ensureBaseFiles()
+  const { profileFile, profilePinsFile } = await getPaths()
+  const normalized = Array.from(
+    new Set((nextPinned ?? []).filter((id): id is string => typeof id === 'string' && id.trim().length > 0))
+  )
+  const prev = await readProfileConfig()
+  const config: ProfileConfig = { ...prev, pinnedDiaryIds: normalized }
+  await fs.writeFile(profileFile, JSON.stringify(config, null, 2), 'utf8')
+  await fs.writeFile(profilePinsFile, JSON.stringify({ pinnedDiaryIds: normalized }, null, 2), 'utf8')
+  return config
 }
 
 async function writeRelations(rel: RelationsMap) {

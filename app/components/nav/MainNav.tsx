@@ -7,6 +7,7 @@ import { useThemeMode } from '@/components/providers/ThemeProvider'
 import type { Route } from 'next'
 
 const NAV_ITEMS: Array<{ href: Route; label: string }> = [
+  { href: '/profile' as Route, label: '主页' },
   { href: '/diary' as Route, label: '日记' },
   { href: '/sheets' as Route, label: '表格' },
   { href: '/trends' as Route, label: '趋势' },

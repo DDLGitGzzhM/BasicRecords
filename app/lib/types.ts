@@ -100,3 +100,11 @@ export type DirectoryListing = {
   parent: string | null
   entries: DirectoryEntry[]
 }
+
+export type ProfileConfig = {
+  pinnedDiaryIds: string[]
+}
+
+export type ProfilePins = {
+  pinnedDiaryIds: string[]
+}

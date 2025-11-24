@@ -25,6 +25,10 @@
    - Tauri/Electron 端可调用 Go 服务写入本地 tar.gz/zip。
 
 ## 3. 数据与存储设计
+### 3.1 个人主页与置顶数据
+- 个人主页（/profile）复用 relations 的 `relations-week.json`/`relations-month.json` 直接读取年度活跃热力图数据，避免全量扫描日记。
+- 置顶文章配置写入 `relations/profile.json`（主配置）与 `relations/profile-pins.json`（备份/导出时可用），两者结构均为 `{ "pinnedDiaryIds": string[] }`，日记增删时依旧由既有桶写入逻辑维护聚合文件。
+
 - **核心表**：
   - `events`: uuid, title, content, mood, tags, media_refs, sheet_refs。
   - `metrics`: uuid, sheet_id, metric_type, value_open/high/low/close, attachments。

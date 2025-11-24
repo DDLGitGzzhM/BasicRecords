@@ -1,4 +1,12 @@
-import type { DiaryEntry, DiaryInput, DirectoryListing, SheetDefinition, SheetRow, SheetRowInput } from '@/lib/types'
+import type {
+  DiaryEntry,
+  DiaryInput,
+  DirectoryListing,
+  SheetDefinition,
+  SheetRow,
+  SheetRowInput,
+  ProfileConfig
+} from '@/lib/types'
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -190,4 +198,19 @@ export async function uploadVisionBackground(file: File): Promise<string> {
   })
   const payload = await handleResponse<{ path: string }>(res)
   return payload.path
+}
+
+// ----- Profile -----
+export async function fetchProfileConfig(): Promise<ProfileConfig> {
+  const res = await fetch('/api/profile')
+  return handleResponse(res)
+}
+
+export async function savePinnedDiaries(ids: string[]): Promise<ProfileConfig> {
+  const res = await fetch('/api/profile', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pinnedDiaryIds: ids })
+  })
+  return handleResponse(res)
 }
