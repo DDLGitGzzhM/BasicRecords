@@ -10,21 +10,17 @@ export async function GET(req: Request) {
     const backgrounds = await readVisionBackgrounds()
     const links = await readVisionLinks()
     
-    // 如果没有背景图片，确保至少有一个默认背景
-    if (backgrounds.length === 0) {
-      const defaultBg = await readVisionBackgrounds()
-      if (defaultBg.length > 0) {
-        config.backgrounds = defaultBg
-        config.currentBackgroundIndex = 0
-        await saveVisionConfig(config)
-      }
-    } else {
-      // 同步背景列表到配置
+    // 同步背景列表到配置，不自动下载默认背景
+    if (backgrounds.length > 0) {
       config.backgrounds = backgrounds
       if (config.currentBackgroundIndex >= backgrounds.length) {
         config.currentBackgroundIndex = Math.max(0, backgrounds.length - 1)
       }
       await saveVisionConfig(config)
+    } else {
+      // 如果没有背景，保持配置中的空数组
+      config.backgrounds = []
+      config.currentBackgroundIndex = 0
     }
     
     // 如果请求了特定索引，使用该索引，否则使用配置中的索引

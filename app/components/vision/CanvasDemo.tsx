@@ -109,19 +109,20 @@ export function CanvasDemo({ diaries }: Props) {
             setBackgrounds(loadedBackgrounds)
             setCurrentBackgroundIndex(loadedIndex)
           }
+          // 只使用从服务器加载的数据，不fallback到预设数据
+          setBubbles(loaded)
           if (loaded.length > 0) {
-            setBubbles(loaded)
             setSelectedId(loaded[0]?.id ?? '')
           } else {
-            setBubbles(presetBubbles)
-            setSelectedId(presetBubbles[0]?.id ?? '')
+            setSelectedId('')
           }
         }
       } catch (err) {
         console.error('加载小球数据失败:', err)
         if (!cancelled) {
-          setBubbles(presetBubbles)
-          setSelectedId(presetBubbles[0]?.id ?? '')
+          // 加载失败时也不使用预设数据，保持空状态
+          setBubbles([])
+          setSelectedId('')
         }
       } finally {
         if (!cancelled) {
@@ -371,7 +372,12 @@ export function CanvasDemo({ diaries }: Props) {
 
   const handleImportBubbles = (sourceBackground: string, selectedBubbleIds: string[]) => {
     const sourceBubbles = allBubblesByBackground[sourceBackground] || []
-    const bubblesToImport = sourceBubbles.filter(b => selectedBubbleIds.includes(b.id))
+    // 只导入有内容的bubbles，过滤掉content为空或只有空白字符的
+    const bubblesToImport = sourceBubbles.filter(b => 
+      selectedBubbleIds.includes(b.id) && 
+      b.content && 
+      b.content.trim().length > 0
+    )
     
     if (bubblesToImport.length === 0) return
     
@@ -472,12 +478,24 @@ export function CanvasDemo({ diaries }: Props) {
         <div className="section-card">
           <div
             ref={containerRef}
-            className="relative overflow-hidden rounded-2xl border border-[var(--border)]"
+            className={`relative overflow-hidden rounded-2xl ${
+              currentBackground ? 'border border-[var(--border)]' : 'placeholder-border border-2 border-dashed border-[var(--border)]'
+            }`}
             style={{
               minHeight: 640,
-              background: currentBackground ? `url(${currentBackground.startsWith('blob:') || currentBackground.startsWith('http') ? currentBackground : resolveAssetUrl(currentBackground)}) center/cover no-repeat` : 'linear-gradient(135deg, #f5f5f5, #eae7df)'
+              background: currentBackground 
+                ? `url(${currentBackground.startsWith('blob:') || currentBackground.startsWith('http') ? currentBackground : resolveAssetUrl(currentBackground)}) center/cover no-repeat` 
+                : 'var(--surface)'
             }}
           >
+            {!currentBackground && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
+                <div className="text-center px-8">
+                  <p className="text-[var(--text-muted)] text-sm mb-2">暂无背景图片</p>
+                  <p className="text-[var(--text-muted)] text-xs">点击上方"上传背景"按钮添加背景</p>
+                </div>
+              </div>
+            )}
             {/* 左右切换按钮 */}
             {backgrounds.length > 1 && (
               <>

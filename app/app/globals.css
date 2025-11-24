@@ -536,3 +536,28 @@ textarea:not(.unreset) {
   margin-left: 1.25rem;
   list-style: disc;
 }
+
+/* 蚂蚁线动画效果 */
+@keyframes dash-move {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 20px 20px;
+  }
+}
+
+.placeholder-border {
+  position: relative;
+  border: 2px dashed var(--border) !important;
+  background-image: 
+    repeating-linear-gradient(
+      45deg,
+      transparent,
+      transparent 8px,
+      var(--border) 8px,
+      var(--border) 16px
+    );
+  background-size: 20px 20px;
+  animation: dash-move 1s linear infinite;
+}

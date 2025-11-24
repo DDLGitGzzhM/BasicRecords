@@ -711,7 +711,7 @@ export async function deleteSheetRow(sheetId: string, rowId: string) {
 
 export async function createSheet(name: string, description?: string): Promise<SheetDefinition> {
   const metas = await readSheetMetas()
-  const baseKey = slugifyName(name) || `sheet-${Date.now().toString(36)}`
+  const baseKey = titleToSlug(name) || `sheet-${Date.now().toString(36)}`
   let key = baseKey
   const existingKeys = new Set(metas.map((item) => item.key))
   while (existingKeys.has(key)) {
@@ -1201,6 +1201,12 @@ export type VisionLinks = {
   note?: string
 }
 
+export type VisionConfig = {
+  backgrounds: string[]
+  currentBackgroundIndex: number
+  bubblesByBackground: Record<string, Bubble[]>
+}
+
 async function migrateLegacyVisionData() {
   const paths = await getPaths()
   const legacyVisionDir = path.join(paths.contentDir, 'vision')
@@ -1285,56 +1291,13 @@ async function ensureVisionFiles() {
     await fs.writeFile(visionLinksFile, JSON.stringify({ links: [], imageLinks: [] }, null, 2), 'utf8')
   }
   if (!(await pathExists(visionConfigFile))) {
-    // 初始化demo数据：下载默认背景并创建配置
-    const defaultBgs = await downloadDefaultBackgrounds()
-    const defaultBubbles: Bubble[] = [
-      {
-        id: 'bubble-spirit',
-        label: '品质精神',
-        content: '保持专注，做当下最重要的事。',
-        x: 0.27,
-        y: 0.32,
-        size: 86,
-        color: '#c87a24',
-        diaryIds: []
-      },
-      {
-        id: 'bubble-quality',
-        label: '品质精神',
-        content: '写完即改，保证交付含金量。',
-        x: 0.58,
-        y: 0.24,
-        size: 92,
-        color: '#3b82f6',
-        diaryIds: []
-      },
-      {
-        id: 'bubble-persist',
-        label: '坚持',
-        content: '每天复盘 + 一点点前进。',
-        x: 0.52,
-        y: 0.62,
-        size: 96,
-        color: '#16a34a',
-        diaryIds: []
-      }
-    ]
-    
-    const bubblesByBackground: Record<string, Bubble[]> = {}
-    if (defaultBgs.length > 0) {
-      // 第一个背景有小球，其他背景为空
-      bubblesByBackground[defaultBgs[0]] = defaultBubbles
-      for (let i = 1; i < defaultBgs.length; i++) {
-        bubblesByBackground[defaultBgs[i]] = []
-      }
-    }
-    
-    const defaultConfig: VisionConfig = {
-      backgrounds: defaultBgs,
+    // 创建空配置，不自动添加demo数据
+    const emptyConfig: VisionConfig = {
+      backgrounds: [],
       currentBackgroundIndex: 0,
-      bubblesByBackground
+      bubblesByBackground: {}
     }
-    await fs.writeFile(visionConfigFile, JSON.stringify(defaultConfig, null, 2), 'utf8')
+    await fs.writeFile(visionConfigFile, JSON.stringify(emptyConfig, null, 2), 'utf8')
   }
 }
 
@@ -1469,14 +1432,12 @@ export async function readVisionBackgrounds(): Promise<string[]> {
       })
     }
     
-    // 如果没有本地图片，下载多个默认图片用于demo
-    const defaultBgs = await downloadDefaultBackgrounds()
-    return defaultBgs
+    // 如果没有本地图片，返回空数组，不自动下载
+    return []
   } catch (err) {
     console.error('读取背景图片失败:', err)
-    // 如果读取失败，尝试下载默认图片
-    const defaultBgs = await downloadDefaultBackgrounds()
-    return defaultBgs
+    // 读取失败时也返回空数组，不自动下载
+    return []
   }
 }
 
