@@ -8,7 +8,9 @@ import type {
   SheetDefinition,
   SheetMeta,
   SheetRow,
-  SheetRowInput
+  SheetRowInput,
+  WeekBucket,
+  MonthBucket
 } from '@/lib/types'
 import { readDataRoot } from '@/lib/server/config'
 
@@ -20,13 +22,9 @@ type PathBundle = {
   tableDir: string
   relationsDir: string
   relationsFile: string
+  weekRelationsFile: string
+  monthRelationsFile: string
   sheetMetaFile: string
-  visionDir: string
-  visionImageDir: string
-  visionContentDir: string
-  visionFile: string
-  visionLinksFile: string
-  visionConfigFile: string
 }
 
 type DiaryFileInfo = { filePath: string; isChild: boolean }
@@ -34,6 +32,41 @@ type DiaryFileInfo = { filePath: string; isChild: boolean }
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif'])
 const VIDEO_EXTS = new Set(['.mp4', '.mov', '.webm', '.m4v', '.avi', '.mkv'])
 const OTHER_ASSET_DIR = 'files'
+const VISION_DIR = 'vision'
+const VISION_CONFIG_FILE = 'vision-config.json'
+const VISION_LINKS_FILE = 'vision-links.json'
+const VISION_BACKGROUNDS_DIR = 'backgrounds'
+
+export type Bubble = {
+  id: string
+  label: string
+  content: string
+  x: number
+  y: number
+  size: number
+  color: string
+  diaryIds?: string[]
+}
+
+export type VisionConfig = {
+  backgrounds: string[]
+  currentBackgroundIndex: number
+  bubblesByBackground: Record<string, Bubble[]>
+}
+
+export type VisionLinks = {
+  links: Array<{ bubbleId: string; diaryId: string }>
+  imageLinks: Array<{ bubbleId: string; image: string }>
+  note?: string
+}
+
+type VisionPaths = {
+  root: string
+  visionDir: string
+  configFile: string
+  linksFile: string
+  backgroundsDir: string
+}
 
 async function getPaths(): Promise<PathBundle> {
   const root = await readDataRoot()
@@ -41,14 +74,10 @@ async function getPaths(): Promise<PathBundle> {
   const tableDir = path.join(root, 'table')
   const relationsDir = path.join(root, 'relations')
   const relationsFile = path.join(relationsDir, 'relations.json')
+  const weekRelationsFile = path.join(relationsDir, 'relations-week.json')
+  const monthRelationsFile = path.join(relationsDir, 'relations-month.json')
   const sheetMetaFile = path.join(relationsDir, 'meta.json')
-  const visionDir = path.join(root, 'vision')
-  const visionImageDir = path.join(visionDir, 'image')
-  const visionContentDir = path.join(visionDir, 'content')
-  const visionFile = path.join(relationsDir, 'bubbles.json')
-  const visionLinksFile = path.join(relationsDir, 'vision-links.json')
-  const visionConfigFile = path.join(relationsDir, 'vision-config.json')
-  return { root, contentDir, tableDir, relationsDir, relationsFile, sheetMetaFile, visionDir, visionImageDir, visionContentDir, visionFile, visionLinksFile, visionConfigFile }
+  return { root, contentDir, tableDir, relationsDir, relationsFile, weekRelationsFile, monthRelationsFile, sheetMetaFile }
 }
 
 async function pathExists(target: string) {
@@ -61,12 +90,26 @@ async function pathExists(target: string) {
 }
 
 async function ensureBaseFiles() {
-  const { contentDir, tableDir, relationsDir, relationsFile } = await getPaths()
+  const { contentDir, tableDir, relationsDir, relationsFile, weekRelationsFile, monthRelationsFile } = await getPaths()
   await fs.mkdir(contentDir, { recursive: true })
   await fs.mkdir(tableDir, { recursive: true })
   await fs.mkdir(relationsDir, { recursive: true })
   if (!(await pathExists(relationsFile))) {
-    await fs.writeFile(relationsFile, JSON.stringify({ sheetRowsToDiaries: {}, diariesToSheets: {} }, null, 2), 'utf8')
+    await fs.writeFile(
+      relationsFile,
+      JSON.stringify(
+        { sheetRowsToDiaries: {}, diariesToSheets: {}, weekBuckets: {}, monthBuckets: {} },
+        null,
+        2
+      ),
+      'utf8'
+    )
+  }
+  if (!(await pathExists(weekRelationsFile))) {
+    await fs.writeFile(weekRelationsFile, JSON.stringify({}, null, 2), 'utf8')
+  }
+  if (!(await pathExists(monthRelationsFile))) {
+    await fs.writeFile(monthRelationsFile, JSON.stringify({}, null, 2), 'utf8')
   }
 }
 
@@ -184,6 +227,7 @@ function formatDateParts(raw?: string) {
   const day = String(date.getUTCDate()).padStart(2, '0')
   return { date, year, month, day }
 }
+
 
 function normalizeOccurredAt(raw?: string, fallbackPath?: string): string {
   const date = raw ? new Date(raw) : null
@@ -430,6 +474,9 @@ export async function appendDiaryEntry(input: DiaryInput): Promise<DiaryEntry> {
   if (input.mood && input.mood.trim().length > 0) {
     nextEntry.mood = input.mood.trim()
   }
+  const relations = await readRelations()
+  addDiaryToBuckets(relations, id, nextEntry.occurredAt)
+  await writeRelations(relations)
   return nextEntry
 }
 
@@ -485,6 +532,10 @@ export async function updateDiaryEntry(id: string, input: DiaryInput): Promise<D
   if (path.resolve(found.file.filePath) !== path.resolve(target.filePath)) {
     await fs.unlink(found.file.filePath).catch(() => {})
   }
+  const relations = await readRelations()
+  removeDiaryFromBuckets(relations, id, current.occurredAt)
+  addDiaryToBuckets(relations, id, nextEntry.occurredAt)
+  await writeRelations(relations)
   return nextEntry
 }
 
@@ -508,6 +559,7 @@ export async function deleteDiaryEntry(id: string) {
       relations.sheetRowsToDiaries[rowId] = []
     }
   })
+  removeDiaryFromBuckets(relations, id, found.entry.occurredAt)
   await writeRelations(relations)
 }
 
@@ -517,15 +569,135 @@ export async function readRelations(): Promise<RelationsMap> {
   const { relationsFile } = await getPaths()
   const raw = await fs.readFile(relationsFile, 'utf8')
   const parsed = JSON.parse(raw) as RelationsMap
-  return {
+  const rel: RelationsMap = {
     sheetRowsToDiaries: parsed.sheetRowsToDiaries ?? {},
-    diariesToSheets: parsed.diariesToSheets ?? {}
+    diariesToSheets: parsed.diariesToSheets ?? {},
+    weekBuckets: parsed.weekBuckets ?? {},
+    monthBuckets: parsed.monthBuckets ?? {}
+  }
+  // 如果旧格式 weekDiaryRefs/monthDiaryRefs 仍存在，尝试迁移
+  if (!rel.weekBuckets && (parsed as any).weekDiaryRefs) {
+    rel.weekBuckets = Object.fromEntries(
+      Object.entries((parsed as any).weekDiaryRefs as Record<string, string[]>).map(([week, ids]) => [
+        week,
+        { days: {}, total: ids.length }
+      ])
+    )
+  }
+  if (!rel.monthBuckets && (parsed as any).monthDiaryRefs) {
+    rel.monthBuckets = Object.fromEntries(
+      Object.entries((parsed as any).monthDiaryRefs as Record<string, string[]>).map(([month, ids]) => [
+        month,
+        { days: {}, total: ids.length }
+      ])
+    )
+  }
+  const shouldRebuild =
+    Object.keys(rel.weekBuckets ?? {}).length === 0 || Object.keys(rel.monthBuckets ?? {}).length === 0
+  if (shouldRebuild) {
+    const diaries = await readDiaryEntries()
+    rel.weekBuckets = {}
+    rel.monthBuckets = {}
+    diaries.forEach((entry) => {
+      addDiaryToBuckets(rel, entry.id, entry.occurredAt)
+    })
+    await writeRelations(rel)
+  }
+  return rel
+}
+
+export async function readDiaryAggregates(): Promise<Pick<RelationsMap, 'weekBuckets' | 'monthBuckets'>> {
+  const rel = await readRelations()
+  return {
+    weekBuckets: rel.weekBuckets ?? {},
+    monthBuckets: rel.monthBuckets ?? {}
   }
 }
 
 async function writeRelations(rel: RelationsMap) {
-  const { relationsFile } = await getPaths()
+  const { relationsFile, weekRelationsFile, monthRelationsFile } = await getPaths()
   await fs.writeFile(relationsFile, JSON.stringify(rel, null, 2), 'utf8')
+  if (rel.weekBuckets) {
+    await fs.writeFile(weekRelationsFile, JSON.stringify(rel.weekBuckets, null, 2), 'utf8')
+  }
+  if (rel.monthBuckets) {
+    await fs.writeFile(monthRelationsFile, JSON.stringify(rel.monthBuckets, null, 2), 'utf8')
+  }
+}
+
+function getWeekKey(date: string) {
+  const d = new Date(date)
+  if (Number.isNaN(d.getTime())) return ''
+  const day = (d.getUTCDay() + 6) % 7 // Monday = 0
+  const monday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day))
+  return monday.toISOString().slice(0, 10)
+}
+
+function getMonthKey(date: string) {
+  const d = new Date(date)
+  if (Number.isNaN(d.getTime())) return ''
+  const year = d.getUTCFullYear()
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0')
+  return `${year}-${month}`
+}
+
+function getDayKey(date: string) {
+  const d = new Date(date)
+  if (Number.isNaN(d.getTime())) return ''
+  const year = d.getUTCFullYear()
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function addDiaryToBuckets(rel: RelationsMap, id: string, occurredAt: string) {
+  const weekKey = getWeekKey(occurredAt)
+  const monthKey = getMonthKey(occurredAt)
+  const dayKey = getDayKey(occurredAt)
+  if (!rel.weekBuckets) rel.weekBuckets = {}
+  if (!rel.monthBuckets) rel.monthBuckets = {}
+  if (weekKey) {
+    const bucket = rel.weekBuckets[weekKey] ?? { days: {}, total: 0 }
+    const dayList = bucket.days[dayKey] ?? []
+    if (!dayList.includes(id)) {
+      bucket.days[dayKey] = [...dayList, id]
+      bucket.total = Object.values(bucket.days).reduce((sum, arr) => sum + arr.length, 0)
+    }
+    rel.weekBuckets[weekKey] = bucket
+  }
+  if (monthKey) {
+    const bucket = rel.monthBuckets[monthKey] ?? { days: {}, total: 0 }
+    const dayList = bucket.days[dayKey] ?? []
+    if (!dayList.includes(id)) {
+      bucket.days[dayKey] = [...dayList, id]
+      bucket.total = Object.values(bucket.days).reduce((sum, arr) => sum + arr.length, 0)
+    }
+    rel.monthBuckets[monthKey] = bucket
+  }
+}
+
+function removeDiaryFromBuckets(rel: RelationsMap, id: string, occurredAt: string) {
+  const weekKey = getWeekKey(occurredAt)
+  const monthKey = getMonthKey(occurredAt)
+  const dayKey = getDayKey(occurredAt)
+  if (rel.weekBuckets && weekKey && rel.weekBuckets[weekKey]) {
+    const bucket = rel.weekBuckets[weekKey]
+    if (bucket.days[dayKey]) {
+      bucket.days[dayKey] = bucket.days[dayKey].filter((item) => item !== id)
+      if (bucket.days[dayKey].length === 0) delete bucket.days[dayKey]
+      bucket.total = Object.values(bucket.days).reduce((sum, arr) => sum + arr.length, 0)
+      if (bucket.total === 0) delete rel.weekBuckets[weekKey]
+    }
+  }
+  if (rel.monthBuckets && monthKey && rel.monthBuckets[monthKey]) {
+    const bucket = rel.monthBuckets[monthKey]
+    if (bucket.days[dayKey]) {
+      bucket.days[dayKey] = bucket.days[dayKey].filter((item) => item !== id)
+      if (bucket.days[dayKey].length === 0) delete bucket.days[dayKey]
+      bucket.total = Object.values(bucket.days).reduce((sum, arr) => sum + arr.length, 0)
+      if (bucket.total === 0) delete rel.monthBuckets[monthKey]
+    }
+  }
 }
 
 function parseRowWithHeaders(line: string, headers: string[]) {
@@ -711,7 +883,7 @@ export async function deleteSheetRow(sheetId: string, rowId: string) {
 
 export async function createSheet(name: string, description?: string): Promise<SheetDefinition> {
   const metas = await readSheetMetas()
-  const baseKey = titleToSlug(name) || `sheet-${Date.now().toString(36)}`
+  const baseKey = slugifyName(name) || `sheet-${Date.now().toString(36)}`
   let key = baseKey
   const existingKeys = new Set(metas.map((item) => item.key))
   while (existingKeys.has(key)) {
@@ -1094,9 +1266,12 @@ async function normalizeDiaryPlacement() {
       if (found) {
         if (path.resolve(found) !== path.resolve(target)) {
           await fs.rename(found, target).catch(async () => {
-            const buf = await fs.readFile(found)
-            await fs.writeFile(target, buf)
-            await fs.rm(found, { force: true })
+            if (!(await pathExists(found))) return
+            const buf = await fs.readFile(found).catch(() => null)
+            if (buf) {
+              await fs.writeFile(target, buf)
+              await fs.rm(found, { force: true }).catch(() => {})
+            }
           })
         }
         movedPath = target
@@ -1181,278 +1356,4 @@ async function cleanupEmptyDayDirectories() {
       await fs.rm(yearPath, { recursive: true, force: true }).catch(() => {})
     }
   }
-}
-
-// ---------- Vision Canvas Bubbles
-export type Bubble = {
-  id: string
-  label: string
-  content: string
-  diaryIds: string[]
-  x: number
-  y: number
-  color: string
-  size: number
-}
-
-export type VisionLinks = {
-  links: Array<{ bubbleId: string; diaryId: string }>
-  imageLinks?: Array<{ bubbleId: string; imageId: string }>
-  note?: string
-}
-
-export type VisionConfig = {
-  backgrounds: string[]
-  currentBackgroundIndex: number
-  bubblesByBackground: Record<string, Bubble[]>
-}
-
-async function migrateLegacyVisionData() {
-  const paths = await getPaths()
-  const legacyVisionDir = path.join(paths.contentDir, 'vision')
-  
-  if (await pathExists(legacyVisionDir)) {
-    try {
-      // 确保新的 vision 目录存在
-      await fs.mkdir(paths.visionDir, { recursive: true })
-      await fs.mkdir(paths.visionImageDir, { recursive: true })
-      await fs.mkdir(paths.visionContentDir, { recursive: true })
-      
-      // 迁移 content/vision/ 下的文件到 vision/content/
-      const files = await fs.readdir(legacyVisionDir)
-      let hasFiles = false
-      for (const file of files) {
-        const sourcePath = path.join(legacyVisionDir, file)
-        const targetPath = path.join(paths.visionContentDir, file)
-        const stats = await fs.stat(sourcePath).catch(() => null)
-        if (stats && stats.isFile()) {
-          hasFiles = true
-          // 如果目标文件不存在，则迁移
-          if (!(await pathExists(targetPath))) {
-            await fs.copyFile(sourcePath, targetPath).catch(() => {})
-          } else {
-            // 如果目标文件已存在，也复制（覆盖）
-            await fs.copyFile(sourcePath, targetPath).catch(() => {})
-          }
-        } else if (stats && stats.isDirectory()) {
-          // 如果是目录，递归复制
-          hasFiles = true
-          await fs.mkdir(targetPath, { recursive: true }).catch(() => {})
-          const subFiles = await fs.readdir(sourcePath).catch(() => [])
-          for (const subFile of subFiles) {
-            const subSource = path.join(sourcePath, subFile)
-            const subTarget = path.join(targetPath, subFile)
-            const subStats = await fs.stat(subSource).catch(() => null)
-            if (subStats && subStats.isFile()) {
-              await fs.copyFile(subSource, subTarget).catch(() => {})
-            }
-          }
-        }
-      }
-      
-      // 迁移完成后，删除 content/vision/ 目录
-      if (hasFiles) {
-        await fs.rm(legacyVisionDir, { recursive: true, force: true }).catch(() => {})
-      }
-    } catch (err) {
-      console.error('迁移 vision 数据失败:', err)
-    }
-  }
-}
-
-async function ensureVisionFiles() {
-  const { visionDir, visionImageDir, visionContentDir, visionFile, visionLinksFile, visionConfigFile, relationsDir } = await getPaths()
-  await migrateLegacyVisionData()
-  await fs.mkdir(visionDir, { recursive: true })
-  await fs.mkdir(visionImageDir, { recursive: true })
-  await fs.mkdir(visionContentDir, { recursive: true })
-  await fs.mkdir(relationsDir, { recursive: true })
-  
-  // 迁移旧的 bubbles.json（如果存在）
-  const oldVisionFile = path.join(visionContentDir, 'bubbles.json')
-  if (await pathExists(oldVisionFile)) {
-    try {
-      // 如果新位置没有文件，迁移数据
-      if (!(await pathExists(visionFile))) {
-        const oldData = await fs.readFile(oldVisionFile, 'utf8')
-        await fs.writeFile(visionFile, oldData, 'utf8')
-      }
-      // 删除旧文件（无论是否迁移，都要删除旧位置的文件）
-      await fs.rm(oldVisionFile, { force: true })
-    } catch (err) {
-      console.error('迁移 bubbles.json 失败:', err)
-    }
-  }
-  
-  if (!(await pathExists(visionFile))) {
-    await fs.writeFile(visionFile, JSON.stringify([], null, 2), 'utf8')
-  }
-  if (!(await pathExists(visionLinksFile))) {
-    await fs.writeFile(visionLinksFile, JSON.stringify({ links: [], imageLinks: [] }, null, 2), 'utf8')
-  }
-  if (!(await pathExists(visionConfigFile))) {
-    // 创建空配置，不自动添加demo数据
-    const emptyConfig: VisionConfig = {
-      backgrounds: [],
-      currentBackgroundIndex: 0,
-      bubblesByBackground: {}
-    }
-    await fs.writeFile(visionConfigFile, JSON.stringify(emptyConfig, null, 2), 'utf8')
-  }
-}
-
-export async function readBubbles(): Promise<Bubble[]> {
-  await ensureVisionFiles()
-  const { visionFile } = await getPaths()
-  try {
-    const raw = await fs.readFile(visionFile, 'utf8')
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-export async function saveBubbles(bubbles: Bubble[]): Promise<void> {
-  await ensureVisionFiles()
-  const { visionFile } = await getPaths()
-  await fs.writeFile(visionFile, JSON.stringify(bubbles, null, 2), 'utf8')
-}
-
-export async function readVisionConfig(): Promise<VisionConfig> {
-  await ensureVisionFiles()
-  const { visionConfigFile } = await getPaths()
-  try {
-    const raw = await fs.readFile(visionConfigFile, 'utf8')
-    const parsed = JSON.parse(raw) as VisionConfig
-    return {
-      backgrounds: Array.isArray(parsed.backgrounds) ? parsed.backgrounds : [],
-      currentBackgroundIndex: typeof parsed.currentBackgroundIndex === 'number' ? parsed.currentBackgroundIndex : 0,
-      bubblesByBackground: typeof parsed.bubblesByBackground === 'object' && parsed.bubblesByBackground !== null ? parsed.bubblesByBackground : {}
-    }
-  } catch {
-    return {
-      backgrounds: [],
-      currentBackgroundIndex: 0,
-      bubblesByBackground: {}
-    }
-  }
-}
-
-export async function saveVisionConfig(config: VisionConfig): Promise<void> {
-  await ensureVisionFiles()
-  const { visionConfigFile } = await getPaths()
-  await fs.writeFile(visionConfigFile, JSON.stringify(config, null, 2), 'utf8')
-}
-
-export async function readVisionLinks(): Promise<VisionLinks> {
-  await ensureVisionFiles()
-  const { visionLinksFile } = await getPaths()
-  try {
-    const raw = await fs.readFile(visionLinksFile, 'utf8')
-    const parsed = JSON.parse(raw) as VisionLinks
-    return {
-      links: Array.isArray(parsed.links) ? parsed.links : [],
-      imageLinks: Array.isArray(parsed.imageLinks) ? parsed.imageLinks : [],
-      note: parsed.note
-    }
-  } catch {
-    return { links: [], imageLinks: [] }
-  }
-}
-
-export async function saveVisionLinks(links: VisionLinks): Promise<void> {
-  await ensureVisionFiles()
-  const { visionLinksFile } = await getPaths()
-  await fs.writeFile(visionLinksFile, JSON.stringify(links, null, 2), 'utf8')
-}
-
-async function downloadDefaultBackgrounds(): Promise<string[]> {
-  const { visionImageDir, root } = await getPaths()
-  const defaultImages = [
-    { url: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1500&q=80&sat=-20', filename: 'default-background-1.jpg' },
-    { url: 'https://images.unsplash.com/photo-1519681393784-dbf267915e0e?auto=format&fit=crop&w=1500&q=80&sat=-20', filename: 'default-background-2.jpg' },
-    { url: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?auto=format&fit=crop&w=1500&q=80&sat=-20', filename: 'default-background-3.jpg' }
-  ]
-  
-  const downloaded: string[] = []
-  
-  for (const img of defaultImages) {
-    const targetPath = path.join(visionImageDir, img.filename)
-    try {
-      // 如果图片已存在，直接使用
-      if (await pathExists(targetPath)) {
-        const relative = path.relative(root, targetPath).split(path.sep).join('/')
-        downloaded.push(relative)
-        continue
-      }
-      
-      // 下载图片
-      const response = await fetch(img.url)
-      if (!response.ok) {
-        console.error(`下载背景图片失败: ${img.filename}`, response.statusText)
-        continue
-      }
-      
-      const arrayBuffer = await response.arrayBuffer()
-      const buffer = Buffer.from(arrayBuffer)
-      await fs.writeFile(targetPath, buffer)
-      
-      const relative = path.relative(root, targetPath).split(path.sep).join('/')
-      downloaded.push(relative)
-    } catch (err) {
-      console.error(`下载背景图片失败: ${img.filename}`, err)
-    }
-  }
-  
-  return downloaded
-}
-
-async function downloadDefaultBackground(): Promise<string | null> {
-  const downloaded = await downloadDefaultBackgrounds()
-  return downloaded.length > 0 ? downloaded[0] : null
-}
-
-export async function readVisionBackgrounds(): Promise<string[]> {
-  await ensureVisionFiles()
-  const { visionImageDir, root } = await getPaths()
-  try {
-    const files = await fs.readdir(visionImageDir)
-    const imageFiles = files.filter(f => {
-      const ext = path.extname(f).toLowerCase()
-      return IMAGE_EXTS.has(ext)
-    })
-    
-    if (imageFiles.length > 0) {
-      // 返回所有图片的相对路径，按文件名排序
-      const sorted = imageFiles.sort()
-      return sorted.map(f => {
-        const absolute = path.join(visionImageDir, f)
-        return path.relative(root, absolute).split(path.sep).join('/')
-      })
-    }
-    
-    // 如果没有本地图片，返回空数组，不自动下载
-    return []
-  } catch (err) {
-    console.error('读取背景图片失败:', err)
-    // 读取失败时也返回空数组，不自动下载
-    return []
-  }
-}
-
-// 保持向后兼容
-export async function readVisionBackground(): Promise<string | null> {
-  const backgrounds = await readVisionBackgrounds()
-  return backgrounds.length > 0 ? backgrounds[0] : null
-}
-
-export async function saveVisionBackground(filename: string, buffer: Buffer): Promise<{ absolute: string; relative: string }> {
-  await ensureVisionFiles()
-  const { visionImageDir, root } = await getPaths()
-  const sanitized = filename.replace(/[^a-zA-Z0-9._-]/g, '-')
-  const target = path.join(visionImageDir, sanitized)
-  await fs.writeFile(target, buffer)
-  const relative = path.relative(root, target).split(path.sep).join('/')
-  return { absolute: target, relative }
 }

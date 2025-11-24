@@ -4,6 +4,7 @@ import path from 'path'
 import { NextResponse } from 'next/server'
 import { PassThrough, Readable } from 'stream'
 import { readDataRoot } from '@/lib/server/config'
+import { readRelations } from '@/lib/server/fileStore'
 
 export const runtime = 'nodejs'
 
@@ -19,6 +20,8 @@ function sanitizeName(name: string) {
 export async function GET() {
   try {
     const root = await readDataRoot()
+    // 触发 relations 读取，必要时重建周/月聚合再写入各 JSON
+    await readRelations()
     const stats = await fs.stat(root).catch(() => null)
     if (!stats || !stats.isDirectory()) {
       return NextResponse.json({ error: '数据目录不存在或不可读' }, { status: 400 })

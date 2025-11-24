@@ -140,26 +140,36 @@ export async function exportDataPackage(): Promise<{ blob: Blob; filename: strin
   return { blob, filename }
 }
 
+// ----- Vision bubbles -----
 export type Bubble = {
   id: string
   label: string
   content: string
-  diaryIds: string[]
   x: number
   y: number
-  color: string
   size: number
+  color: string
+  diaryIds: string[]
 }
 
-export async function readBubbles(backgroundIndex?: number): Promise<{ bubbles: Bubble[]; backgrounds: string[]; currentBackgroundIndex: number }> {
-  const url = backgroundIndex !== undefined ? `/api/vision?index=${backgroundIndex}` : '/api/vision'
-  const res = await fetch(url)
-  return handleResponse<{ bubbles: Bubble[]; backgrounds: string[]; currentBackgroundIndex: number }>(res)
+export async function readBubbles(index?: number): Promise<{
+  bubbles: Bubble[]
+  backgrounds: string[]
+  currentBackgroundIndex: number
+}> {
+  const qs = typeof index === 'number' ? `?index=${index}` : ''
+  const res = await fetch(`/api/vision${qs}`)
+  return handleResponse(res)
 }
 
-export async function readAllBubbles(): Promise<{ bubbles: Bubble[]; backgrounds: string[]; currentBackgroundIndex: number; allBubblesByBackground: Record<string, Bubble[]> }> {
+export async function readAllBubbles(): Promise<{
+  bubbles: Bubble[]
+  backgrounds: string[]
+  currentBackgroundIndex: number
+  allBubblesByBackground: Record<string, Bubble[]>
+}> {
   const res = await fetch('/api/vision?all=true')
-  return handleResponse<{ bubbles: Bubble[]; backgrounds: string[]; currentBackgroundIndex: number; allBubblesByBackground: Record<string, Bubble[]> }>(res)
+  return handleResponse(res)
 }
 
 export async function saveBubbles(bubbles: Bubble[], currentBackgroundIndex: number, backgrounds: string[]): Promise<void> {
@@ -168,11 +178,7 @@ export async function saveBubbles(bubbles: Bubble[], currentBackgroundIndex: num
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ bubbles, currentBackgroundIndex, backgrounds })
   })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(text || '保存失败')
-  }
-  await res.json()
+  await handleResponse<null>(res)
 }
 
 export async function uploadVisionBackground(file: File): Promise<string> {
@@ -182,10 +188,6 @@ export async function uploadVisionBackground(file: File): Promise<string> {
     method: 'POST',
     body: form
   })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(text || '上传失败')
-  }
   const payload = await handleResponse<{ path: string }>(res)
   return payload.path
 }

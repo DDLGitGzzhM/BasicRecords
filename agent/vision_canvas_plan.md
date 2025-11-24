@@ -49,10 +49,20 @@ Canvas {
 - 保存：拖拽结束即写入 `x/y`；显式“保存布局”按钮调用 API；`x/y` 始终以百分比存储，确保自适应。
 
 ## 4. 状态与持久化
-- 前端：Zustand/Redux 存储当前画布与撤销/重做栈（past/present/future）。
-- 持久化：IndexedDB/localStorage 作为缓存；调用后端/本地 API 持久化。
-- 接口（示例）：`GET /api/vision-notes/:id` 返回 `Canvas`；`POST /api/vision-notes` 保存。
-- 背景图：仅存引用路径或用户选择的 file handle，不上云。
+- 前端：React state 管理当前画布与撤销/重做栈（history 数组）。
+- 持久化：通过 Next.js API 路由 `/api/vision` 持久化到本地文件系统。
+- 数据存储：
+  - `relations/vision-config.json`：存储背景列表、当前背景索引、每个背景对应的小球数据
+  - `relations/vision-links.json`：存储小球与日记 ID 的关联关系
+  - `vision/image/`：存储用户上传的背景图片
+- 接口：
+  - `GET /api/vision`：获取当前背景的小球数据
+  - `GET /api/vision?index=N`：获取指定索引背景的小球数据
+  - `GET /api/vision?all=true`：获取所有背景的小球数据（用于导入功能）
+  - `POST /api/vision`：保存小球数据、背景列表和当前索引
+  - `POST /api/vision/background`：上传背景图片
+- 背景图：存储在本地 `vision/image/` 目录，通过相对路径引用。
+- 初始化行为：不自动创建 demo 数据，不自动下载背景图片，显示占位符提示用户手动添加。
 
 ## 5. 技术实现要点
 - 拖拽：使用 `pointerdown/move/up` 或 `react-use-gesture`；在 `pointermove` 将像素转百分比 `x = (clientX - rect.left)/rect.width`，限制 0-1。
@@ -70,6 +80,15 @@ Canvas {
 - 文本建议 6-8 字，溢出省略号；形状支持圆/胶囊；描边可选细线或柔光。
 
 ## 8. 风险与对策
-- 响应式错位：统一使用百分比坐标并固定画布比例，避免基于原图分辨率。
-- 媒体路径：明确提示背景图仅存引用，需用户保证本地可访问。
-- 撤销频繁：用 reducer 管理 past/future，限制栈深度避免内存增大。
+- 响应式错位：统一使用百分比坐标并固定画布比例，避免基于原图分辨率。✅ 已实现
+- 媒体路径：明确提示背景图仅存引用，需用户保证本地可访问。✅ 已实现，背景图存储在本地
+- 撤销频繁：用 reducer 管理 past/future，限制栈深度避免内存增大。✅ 已实现，使用 history 数组
+- 数据一致性：确保 API 路由和文件存储逻辑一致，避免数据不同步。✅ 已修复
+- 边界情况：处理背景数组为空、索引超出范围等情况。✅ 已优化
+
+## 9. 实现细节（2025-11-19 更新）
+- 数据模型已实现：Bubble 包含 id, label, content, diaryIds, x, y, color, size
+- 支持多背景切换，每个背景有独立的小球列表
+- 导入功能：可以从其他背景导入小球，但只导入有内容的（content 不为空）
+- 占位符：当没有背景时，显示蚂蚁线边框和提示文字
+- 错误处理：完善的边界情况检查和错误提示

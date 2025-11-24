@@ -379,7 +379,13 @@ export function CanvasDemo({ diaries }: Props) {
       b.content.trim().length > 0
     )
     
-    if (bubblesToImport.length === 0) return
+    if (bubblesToImport.length === 0) {
+      // 如果所有选中的bubbles都被过滤了，给用户提示
+      if (selectedBubbleIds.length > 0) {
+        alert('选中的小球中没有内容，无法导入。请选择有内容的小球。')
+      }
+      return
+    }
     
     // 为导入的小球生成新的ID，但保持位置关系（x, y坐标）
     const importedBubbles = bubblesToImport.map(bubble => ({

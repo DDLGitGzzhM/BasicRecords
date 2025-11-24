@@ -1,5 +1,23 @@
 # Changelog
 
+## 2025-11-21
+- 日/周/月聚合关系落盘：`relations.json` 结构改为 `weekBuckets` / `monthBuckets`（含 day map 与 total），同步生成 `relations-week.json`、`relations-month.json`，日记增删改直接更新，无需全量扫描。
+- 导出流程会先加载 relations 以确保周/月聚合写入到压缩包中。
+- 周/月视图默认读取预计算聚合数据（缺省时回退至内存分组），并沿用现有导航与跳转。
+
+## 2025-11-19
+- 修复 vision canvas 自动创建 demo 数据的问题
+  - 修复 `createSheet` 中 `slugifyName` 未定义的错误，改为使用 `titleToSlug`
+  - 移除自动创建包含"品质精神"的 demo bubbles
+  - 移除自动下载默认背景图片的逻辑
+  - 添加蚂蚁线边框占位符，当没有背景时显示虚线边框和提示文字
+  - 移除 CanvasDemo 组件 fallback 到预设数据的逻辑
+- 优化和修复 vision canvas 代码逻辑
+  - 修复 API 路由中背景数组为空时的配置保存问题
+  - 优化边界情况处理：安全处理 `currentBackgroundIndex` 超出范围的情况
+  - 优化导入逻辑：当所有选中的 bubbles 都被过滤时给用户提示
+  - 改进错误处理和边界条件检查
+
 ## 2025-11-18
 - 把日记改为 Markdown 文件、表格改为 CSV + `relations.json`，Next.js API 负责读写本地内容。
 - `/diary` 提供 Markdown 表单、附件预览、弹窗放大；支持图片/视频/音频引用。

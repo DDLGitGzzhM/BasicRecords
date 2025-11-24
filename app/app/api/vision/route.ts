@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { readBubbles, saveBubbles, readVisionLinks, saveVisionLinks, readVisionBackgrounds, readVisionConfig, saveVisionConfig, type Bubble, type VisionLinks, type VisionConfig } from '@/lib/server/fileStore'
+import { readVisionLinks, saveVisionLinks, readVisionBackgrounds, readVisionConfig, saveVisionConfig, type Bubble, type VisionLinks, type VisionConfig } from '@/lib/server/fileStore'
 
 export async function GET(req: Request) {
   try {
@@ -18,18 +18,24 @@ export async function GET(req: Request) {
       }
       await saveVisionConfig(config)
     } else {
-      // 如果没有背景，保持配置中的空数组
+      // 如果没有背景，保持配置中的空数组并保存
       config.backgrounds = []
       config.currentBackgroundIndex = 0
+      await saveVisionConfig(config)
     }
     
     // 如果请求了特定索引，使用该索引，否则使用配置中的索引
     const targetIndex = requestedIndex !== null ? parseInt(requestedIndex, 10) : config.currentBackgroundIndex
-    const safeIndex = Math.max(0, Math.min(targetIndex, config.backgrounds.length - 1))
+    // 安全处理：如果背景数组为空，safeIndex为0，但不会使用
+    const safeIndex = config.backgrounds.length > 0 
+      ? Math.max(0, Math.min(targetIndex, config.backgrounds.length - 1))
+      : 0
     
     // 获取指定背景对应的小球
-    const currentBackground = config.backgrounds[safeIndex] || config.backgrounds[0] || ''
-    const bubbles = config.bubblesByBackground[currentBackground] || []
+    const currentBackground = config.backgrounds.length > 0 
+      ? (config.backgrounds[safeIndex] || config.backgrounds[0] || '')
+      : ''
+    const bubbles = currentBackground ? (config.bubblesByBackground[currentBackground] || []) : []
     
     // 将关联关系合并到小球中
     const linksMap = new Map<string, string[]>()
@@ -97,11 +103,17 @@ export async function POST(req: Request) {
       config.backgrounds = backgrounds
     }
     if (typeof currentBackgroundIndex === 'number') {
-      config.currentBackgroundIndex = currentBackgroundIndex
+      // 确保索引在有效范围内
+      const safeIndex = config.backgrounds.length > 0
+        ? Math.max(0, Math.min(currentBackgroundIndex, config.backgrounds.length - 1))
+        : 0
+      config.currentBackgroundIndex = safeIndex
     }
     
-    // 获取当前背景
-    const currentBackground = config.backgrounds[config.currentBackgroundIndex] || config.backgrounds[0] || ''
+    // 获取当前背景，安全处理边界情况
+    const currentBackground = config.backgrounds.length > 0
+      ? (config.backgrounds[config.currentBackgroundIndex] || config.backgrounds[0] || '')
+      : ''
     
     // 保存当前背景对应的小球数据（不包含关联关系）
     const bubblesWithoutLinks = bubbles.map(({ diaryIds, ...bubble }: Bubble) => bubble)
@@ -126,7 +138,7 @@ export async function POST(req: Request) {
     
     await saveVisionLinks(links)
     
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ data: { success: true } })
   } catch (err) {
     const message = err instanceof Error ? err.message : '保存失败'
     return NextResponse.json({ error: message }, { status: 500 })

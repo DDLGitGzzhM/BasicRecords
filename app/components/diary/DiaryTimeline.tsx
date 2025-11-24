@@ -1,13 +1,13 @@
 'use client'
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import { EventCard } from '@/components/cards/EventCard'
 import { createDiaryEntry, deleteDiaryEntryClient, updateDiaryEntryClient, uploadAsset } from '@/lib/api'
-import type { DiaryEntry } from '@/lib/types'
+import type { DiaryEntry, WeekBucket, MonthBucket } from '@/lib/types'
 import { resolveAssetUrl } from '@/lib/assets'
 import { format } from 'date-fns'
 
@@ -61,9 +61,27 @@ const previewComponents = {
     ) : null
 }
 
-export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
+type DiaryTimelineProps = {
+  entries: DiaryEntry[]
+  weekBuckets?: Record<string, WeekBucket>
+  monthBuckets?: Record<string, MonthBucket>
+}
+
+export function DiaryTimeline({ entries, weekBuckets, monthBuckets }: DiaryTimelineProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const layoutFromQuery = useMemo(() => {
+    const layoutParam = searchParams.get('layout')
+    return layoutParam === 'week' || layoutParam === 'month' || layoutParam === 'list' ? layoutParam : 'list'
+  }, [searchParams])
+  const focusFromQuery = useMemo(() => {
+    const focusParam = searchParams.get('focus')
+    if (focusParam) {
+      const parsed = new Date(focusParam)
+      if (!Number.isNaN(parsed.getTime())) return parsed
+    }
+    return new Date()
+  }, [searchParams])
   const [items, setItems] = useState(entries)
   const [form, setForm] = useState(createDefaultForm)
   const [error, setError] = useState<string | null>(null)
@@ -72,13 +90,27 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [expandedParentId, setExpandedParentId] = useState<string | null>(null)
   const [formOpen, setFormOpen] = useState(false)
-  const [layout, setLayout] = useState<'list' | 'week' | 'month'>('list')
-  const [referenceDate, setReferenceDate] = useState<Date>(() => new Date())
+  const [layout, setLayout] = useState<'list' | 'week' | 'month'>(layoutFromQuery)
+  const [referenceDate, setReferenceDate] = useState<Date>(focusFromQuery)
   const [page, setPage] = useState(0)
   const [filterTag, setFilterTag] = useState<string | null>(null)
+  const [monthModal, setMonthModal] = useState<{ date: string; entries: DiaryEntry[] } | null>(null)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
   const coverInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<HTMLTextAreaElement>(null)
+
+  const weekdayHeaders = ['一', '二', '三', '四', '五', '六', '日']
+  const diaryById = useMemo(() => new Map(entries.map((d) => [d.id, d])), [entries])
+
+  const weekKeyForDate = useCallback((date: Date) => {
+    const d = new Date(date)
+    const day = (d.getDay() + 6) % 7 // Monday = 0
+    const monday = new Date(d)
+    monday.setDate(d.getDate() - day)
+    return toDateKey(monday)
+  }, [])
+
+  const monthKeyForDate = useCallback((date: Date) => format(date, 'yyyy-MM'), [])
 
   const tagCounts = useMemo(() => {
     const map = new Map<string, number>()
@@ -125,36 +157,40 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
 
   const groupedByDate = useMemo(() => {
     const map = new Map<string, DiaryEntry[]>()
-    sortedRoots.forEach((entry) => {
+    viewItems.forEach((entry) => {
       const dateKey = toDateKey(entry.occurredAt)
       const list = map.get(dateKey) ?? []
       list.push(entry)
       map.set(dateKey, list)
     })
-    return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1))
-  }, [sortedRoots])
+    const sorted = Array.from(map.entries()).map(([key, entries]) => [
+      key,
+      entries.sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
+    ])
+    sorted.sort((a, b) => (a[0] < b[0] ? 1 : -1))
+    return sorted
+  }, [viewItems])
   const groupedMap = useMemo(() => Object.fromEntries(groupedByDate), [groupedByDate])
+  const todayKey = useMemo(() => toDateKey(new Date()), [])
 
   const latestDateFromData = useMemo(() => {
     const top = sortedRoots[0]?.occurredAt
     return top ? new Date(top) : new Date()
   }, [sortedRoots])
 
+  const showSidebar = layout === 'list'
+
   useEffect(() => {
-    const layoutParam = searchParams.get('layout')
-    if (layoutParam === 'week' || layoutParam === 'month' || layoutParam === 'list') {
-      setLayout(layoutParam)
-    }
-    const focusParam = searchParams.get('focus')
-    if (focusParam) {
-      const parsed = new Date(focusParam)
-      if (!Number.isNaN(parsed.getTime())) {
-        setReferenceDate(parsed)
-        return
-      }
-    }
-    setReferenceDate(latestDateFromData)
-  }, [latestDateFromData, searchParams])
+    setLayout(layoutFromQuery)
+    setReferenceDate(focusFromQuery)
+  }, [focusFromQuery, layoutFromQuery])
+
+  const syncQuery = (next: Partial<{ layout: 'list' | 'week' | 'month'; focus: string }>) => {
+    const params = new URLSearchParams(searchParams.toString())
+    if (next.layout) params.set('layout', next.layout)
+    if (next.focus) params.set('focus', next.focus)
+    router.replace(`?${params.toString()}`)
+  }
 
   const weekDates = useMemo(() => {
     const day = (referenceDate.getDay() + 6) % 7 // Monday = 0
@@ -178,6 +214,44 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
       return d
     })
   }, [referenceDate])
+
+  const jumpWeek = (delta: number) => {
+    setReferenceDate((prev) => {
+      const next = new Date(prev)
+      next.setDate(prev.getDate() + delta * 7)
+      syncQuery({ layout, focus: toDateKey(next) })
+      return next
+    })
+  }
+
+  const jumpMonth = (delta: number) => {
+    setReferenceDate((prev) => {
+      const next = new Date(prev)
+      next.setMonth(prev.getMonth() + delta)
+      syncQuery({ layout, focus: toDateKey(next) })
+      return next
+    })
+  }
+
+  const resetToLatest = () => {
+    const today = new Date()
+    setReferenceDate(today)
+    syncQuery({ layout, focus: toDateKey(today) })
+  }
+
+  const openMonthModal = (dateKey: string, entries: DiaryEntry[]) => {
+    setMonthModal({ date: dateKey, entries })
+  }
+
+  const weekLabel = useMemo(() => {
+    if (weekDates.length === 0) return ''
+    const start = weekDates[0]
+    const end = weekDates[6]
+    return `${format(start, 'yyyy/MM.dd')} - ${format(end, 'MM.dd')}`
+  }, [weekDates])
+
+  const monthLabel = useMemo(() => format(referenceDate, 'yyyy/MM'), [referenceDate])
+  const goToDiary = useCallback((id: string) => router.push(`/diary/${id}`), [router])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }))
@@ -340,20 +414,39 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
           <button className="action-button" type="button" onClick={() => setFormOpen(true)}>
             {editingId ? '继续编辑日记' : '新建日记'}
           </button>
-          <div className="stack-layout-switch">
-            {(['list', 'week', 'month'] as const).map((mode) => (
-              <button
-                key={mode}
-                className={`badge ${layout === mode ? 'is-active' : ''}`}
-                type="button"
-                onClick={() => setLayout(mode)}
-              >
-                {mode === 'list' ? '列表视图' : mode === 'week' ? '周缩略' : '月缩略'}
-              </button>
-            ))}
+          <div className="stack-toolbar__actions">
+            <div className="stack-layout-switch">
+              {(['list', 'week', 'month'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  className={`badge ${layout === mode ? 'is-active' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    setLayout(mode)
+                    syncQuery({ layout: mode, focus: toDateKey(referenceDate) })
+                  }}
+                >
+                  {mode === 'list' ? '列表视图' : mode === 'week' ? '周缩略' : '月缩略'}
+                </button>
+              ))}
+            </div>
+            {(layout === 'week' || layout === 'month') && (
+              <div className="calendar-nav">
+                <button className="badge badge--compact" type="button" onClick={() => (layout === 'week' ? jumpWeek(-1) : jumpMonth(-1))}>
+                  ← 上一{layout === 'week' ? '周' : '月'}
+                </button>
+                <span className="calendar-nav__label">{layout === 'week' ? weekLabel : monthLabel}</span>
+                <button className="badge badge--compact" type="button" onClick={() => (layout === 'week' ? jumpWeek(1) : jumpMonth(1))}>
+                  下一{layout === 'week' ? '周' : '月'} →
+                </button>
+                <button className="badge badge--compact" type="button" onClick={resetToLatest}>
+                  回到最新
+                </button>
+              </div>
+            )}
           </div>
         </div>
-        <div className="relative lg:flex lg:items-start lg:gap-2">
+        <div className={`relative ${showSidebar ? 'lg:flex lg:items-start lg:gap-2' : ''}`}>
           <div className="space-y-3 lg:flex-1 lg:min-w-0">
             {filterTag && (
               <div className="flex items-center gap-2 text-sm">
@@ -570,115 +663,232 @@ export function DiaryTimeline({ entries }: { entries: DiaryEntry[] }) {
             )}
 
             {layout === 'week' && (
-              <div className="week-grid">
-                {weekDates.map((day) => {
-                  const dayKey = toDateKey(day)
-                  const dayEntries = groupedMap[dayKey] ?? []
-                  return (
-                    <div key={day.toISOString()} className="week-cell">
-                      <p className="week-date">{day.toLocaleDateString()}</p>
-                      {dayEntries.length === 0 ? (
-                        <p className="text-xs text-[var(--text-muted)]">无记录</p>
-                      ) : (
-                        <ul className="space-y-1">
-                          {dayEntries.map((entry) => (
-                            <li key={entry.id} className="text-sm">
-                              <button className="link" type="button" onClick={() => startEdit(entry)}>
-                                {entry.title}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )
-                })}
+              <div className="space-y-2">
+                <div className="week-weekdays">
+                  {weekDates.map((_, idx) => (
+                    <span key={idx} className="week-weekday">
+                      周{weekdayHeaders[idx]}
+                    </span>
+                  ))}
+                </div>
+                <div className="week-grid">
+                  {weekDates.map((day) => {
+                    const dayKey = toDateKey(day)
+                    const weekKey = weekKeyForDate(day)
+                    const bucket = weekBuckets?.[weekKey]
+                    const dayEntries =
+                      (bucket?.days?.[dayKey] ?? []).map((id) => diaryById.get(id)).filter(Boolean) ||
+                      groupedMap[dayKey] ||
+                      []
+                    const isToday = dayKey === todayKey
+                    return (
+                      <div key={day.toISOString()} className={`week-cell ${isToday ? 'is-today' : ''}`}>
+                        <div className="week-cell__header">
+                          <div className={`week-date ${isToday ? 'is-today' : ''}`}>
+                            <span className="week-date__day">{format(day, 'd')}</span>
+                          </div>
+                        </div>
+                        {dayEntries.length === 0 ? (
+                          <p className="text-xs text-[var(--text-muted)]">无记录</p>
+                        ) : (
+                          <ul className="week-entries">
+                            {dayEntries.map((entry) => (
+                              <li key={entry.id}>
+                                <button className="link week-entry" type="button" onClick={() => goToDiary(entry.id)}>
+                                  {entry.title}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
             )}
 
             {layout === 'month' && (
-              <div className="month-grid">
-                {monthGrid.map((day) => {
-                  const dayKey = toDateKey(day)
-                  const dayEntries = groupedMap[dayKey] ?? []
-                  return (
-                    <div key={day.toISOString()} className="month-cell">
-                      <p className="month-date">{day.getDate()}</p>
-                      {dayEntries.map((entry) => (
-                        <button key={entry.id} className="link block text-left" type="button" onClick={() => startEdit(entry)}>
-                          {entry.title}
-                        </button>
-                      ))}
-                    </div>
-                  )
-                })}
+              <div className="space-y-2">
+                <div className="month-weekdays">
+                  {weekdayHeaders.map((label) => (
+                    <span key={label} className="month-weekday">
+                      周{label}
+                    </span>
+                  ))}
+                </div>
+                <div className="month-grid">
+                  {monthGrid.map((day) => {
+                    const dayKey = toDateKey(day)
+                    const monthKey = monthKeyForDate(day)
+                    const bucket = monthBuckets?.[monthKey]
+                    const dayEntries =
+                      (bucket?.days?.[dayKey] ?? []).map((id) => diaryById.get(id)).filter(Boolean) ||
+                      groupedMap[dayKey] ||
+                      []
+                    const isToday = dayKey === todayKey
+                    const isCurrentMonth = day.getMonth() === referenceDate.getMonth()
+                    const cellClass = `month-cell${isCurrentMonth ? '' : ' is-out-month'}${isToday ? ' is-today' : ''}${
+                      dayEntries.length > 0 ? ' is-clickable' : ''
+                    }`
+                    const showMore = dayEntries.length > 4
+                    const hasEntries = dayEntries.length > 0
+                    return (
+                      <div
+                        key={day.toISOString()}
+                        className={cellClass}
+                        onClick={() => {
+                          if (hasEntries) openMonthModal(dayKey, dayEntries)
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            if (hasEntries) openMonthModal(dayKey, dayEntries)
+                          }
+                        }}
+                      >
+                        <div className="month-cell__header">
+                          <p className={`month-date ${isToday ? 'is-today' : ''}`}>{day.getDate()}</p>
+                        </div>
+                        {dayEntries.slice(0, 4).map((entry) => (
+                          <button
+                            key={entry.id}
+                            className="link block text-left month-entry"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              goToDiary(entry.id)
+                            }}
+                          >
+                            {entry.title}
+                          </button>
+                        ))}
+                        {showMore && (
+                          <button
+                            type="button"
+                            className="link text-left text-[var(--accent)] month-entry"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openMonthModal(dayKey, dayEntries)
+                            }}
+                          >
+                            +{dayEntries.length - 4} 更多
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
             )}
           </div>
 
-          <aside className="mt-4 space-y-3 lg:mt-0 lg:sticky lg:top-24 lg:w-36 lg:max-w-[9rem] lg:flex-shrink-0">
-            <div className="section-card">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-lg font-semibold">标签汇总</h3>
-                {filterTag && (
-                  <button className="badge badge--compact" type="button" onClick={() => setFilterTag(null)}>
-                    清除
-                  </button>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2 text-sm">
-                {Array.from(tagCounts.entries())
-                  .sort((a, b) => b[1] - a[1])
-                  .map(([tag, count]) => (
-                    <button
-                      key={tag}
-                      type="button"
-                      className={`badge badge--compact ${filterTag === tag ? 'is-active' : ''}`}
-                      onClick={() => {
-                        setFilterTag((prev) => (prev === tag ? null : tag))
-                        setPage(0)
-                      }}
-                    >
-                      #{tag} · {count}
+          {showSidebar && (
+            <aside className="mt-4 space-y-3 lg:mt-0 lg:sticky lg:top-24 lg:w-36 lg:max-w-[9rem] lg:flex-shrink-0">
+              <div className="section-card">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-lg font-semibold">标签汇总</h3>
+                  {filterTag && (
+                    <button className="badge badge--compact" type="button" onClick={() => setFilterTag(null)}>
+                      清除
                     </button>
-                  ))}
-                {tagCounts.size === 0 && <p className="text-xs text-[var(--text-muted)]">暂无标签</p>}
-              </div>
-            </div>
-            <div className="section-card">
-              <h3 className="text-lg font-semibold mb-2">标签词云</h3>
-              <div className="flex flex-wrap gap-2">
-                {(() => {
-                  const entries = Array.from(tagCounts.entries())
-                  if (entries.length === 0) return <p className="text-xs text-[var(--text-muted)]">暂无标签</p>
-                  const max = Math.max(...entries.map(([, c]) => c))
-                  const min = Math.min(...entries.map(([, c]) => c))
-                  const spread = Math.max(1, max - min)
-                  return entries.map(([tag, count]) => {
-                    const weight = (count - min) / spread
-                    const size = 12 + weight * 14
-                    const opacity = 0.6 + weight * 0.4
-                    return (
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2 text-sm">
+                  {Array.from(tagCounts.entries())
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([tag, count]) => (
                       <button
                         key={tag}
                         type="button"
+                        className={`badge badge--compact ${filterTag === tag ? 'is-active' : ''}`}
                         onClick={() => {
                           setFilterTag((prev) => (prev === tag ? null : tag))
                           setPage(0)
                         }}
-                        style={{ fontSize: `${size}px`, opacity }}
-                        className={`transition hover:-translate-y-0.5 ${filterTag === tag ? 'text-[var(--accent)]' : ''}`}
                       >
-                        #{tag}
+                        #{tag} · {count}
                       </button>
-                    )
-                  })
-                })()}
+                    ))}
+                  {tagCounts.size === 0 && <p className="text-xs text-[var(--text-muted)]">暂无标签</p>}
+                </div>
               </div>
-            </div>
-          </aside>
+              <div className="section-card">
+                <h3 className="text-lg font-semibold mb-2">标签词云</h3>
+                <div className="flex flex-wrap gap-2">
+                  {(() => {
+                    const entries = Array.from(tagCounts.entries())
+                    if (entries.length === 0) return <p className="text-xs text-[var(--text-muted)]">暂无标签</p>
+                    const max = Math.max(...entries.map(([, c]) => c))
+                    const min = Math.min(...entries.map(([, c]) => c))
+                    const spread = Math.max(1, max - min)
+                    return entries.map(([tag, count]) => {
+                      const weight = (count - min) / spread
+                      const size = 12 + weight * 14
+                      const opacity = 0.6 + weight * 0.4
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => {
+                            setFilterTag((prev) => (prev === tag ? null : tag))
+                            setPage(0)
+                          }}
+                          style={{ fontSize: `${size}px`, opacity }}
+                          className={`transition hover:-translate-y-0.5 ${filterTag === tag ? 'text-[var(--accent)]' : ''}`}
+                        >
+                          #{tag}
+                        </button>
+                      )
+                    })
+                  })()}
+                </div>
+              </div>
+            </aside>
+          )}
         </div>
       </div>
+
+      {monthModal && (
+        <div className="diary-modal-backdrop is-fullscreen" onClick={() => setMonthModal(null)}>
+          <div className="diary-modal table-editor-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="workspace-shell">
+              <div className="workspace-header">
+                <div className="workspace-heading">
+                  <p className="text-xs uppercase tracking-[0.3em] text-[var(--text-muted)]">Monthly Overview</p>
+                  <h3 className="text-2xl font-semibold">日记总览 · {monthModal.date}</h3>
+                </div>
+                <button className="badge" type="button" onClick={() => setMonthModal(null)}>
+                  关闭
+                </button>
+              </div>
+              <div className="workspace-body">
+                <div className="workspace-panel space-y-2">
+                  {monthModal.entries.map((entry) => (
+                        <div key={entry.id} className="preview-note">
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className="badge badge--compact">{toDateKey(entry.occurredAt)}</span>
+                          <button className="link" type="button" onClick={() => goToDiary(entry.id)}>
+                            {entry.title}
+                          </button>
+                        </div>
+                        <button className="badge badge--compact" type="button" onClick={() => goToDiary(entry.id)}>
+                          查看
+                        </button>
+                      </div>
+                      <p className="text-sm text-[var(--text-muted)] line-clamp-2">{entry.content.slice(0, 120)}</p>
+                    </div>
+                  ))}
+                  {monthModal.entries.length === 0 && <p className="text-sm text-[var(--text-muted)]">该日期暂无日记</p>}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

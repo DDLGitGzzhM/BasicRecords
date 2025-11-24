@@ -75,6 +75,18 @@ export type SheetMeta = {
 export type RelationsMap = {
   sheetRowsToDiaries: Record<string, string[]>
   diariesToSheets: Record<string, string[]>
+  weekBuckets?: Record<string, WeekBucket>
+  monthBuckets?: Record<string, MonthBucket>
+}
+
+export type WeekBucket = {
+  days: Record<string, string[]>
+  total: number
+}
+
+export type MonthBucket = {
+  days: Record<string, string[]>
+  total: number
 }
 
 export type DirectoryEntry = {
